@@ -1,10 +1,8 @@
 ---
 
-### Repository: `Commercial_Projects`
-
 # Commercial Projects
 
-Welcome to the Commercial Projects repository. This repository contains projects I have worked on in professional settings, including IT companies, system integrators, startups, and within my own business.
+Welcome to the Commercial Projects repository. This repository contains projects I have worked on in professional settings, including IT companies, government organizations, startups, and within my own business.
 
 ## Table of Contents
 

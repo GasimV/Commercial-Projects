@@ -1,0 +1,4 @@
+.ipynb_checkpoints/
+knn_entez_model.pkl
+tfidf_vectorizer.pkl
+mnb_entez_model.pkl
