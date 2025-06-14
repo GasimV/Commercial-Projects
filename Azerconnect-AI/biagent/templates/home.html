@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Azerconnect-AI Home UI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      background: linear-gradient(to top right, #fefefe, #f3f3f3);
+    }
+    .sidebar {
+      width: 240px;
+      background: #f7f7f9;
+      border-right: 1px solid #ddd;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .sidebar h4 { margin: 10px 0 5px; color: #666; }
+    .main { flex: 1; padding: 30px; position: relative; overflow-y: auto; }
+    .header { font-size: 22px; margin-bottom: 30px; }
+    .cards { display: flex; gap: 20px; margin-bottom: 40px; }
+    .card {
+      border: 1px solid #ddd;
+      padding: 15px 20px;
+      border-radius: 8px;
+      width: 240px;
+      background: white;
+      cursor: pointer;
+      transition: box-shadow 0.3s;
+    }
+    .card:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.1); }
+    .card small { display: block; color: #888; font-weight: bold; margin-bottom: 6px; }
+    .footer-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 30px;
+      right: 30px;
+      display: flex;
+      gap: 10px;
+    }
+    .footer-bar input {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+    .footer-bar button {
+      padding: 10px 16px;
+      background: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .footer-bar button:hover { background: #2563eb; }
+    .logo { font-size: 20px; font-weight: bold; margin-bottom: 20px; }
+    .menu-bar {
+      display: flex;
+      gap: 20px;
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 20px;
+    }
+    .menu-bar span { cursor: pointer; }
+    .menu-bar span:hover { color: #111; font-weight: 500; }
+
+    .response-box {
+      display: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      margin-bottom: 40px;
+      max-width: 900px;
+    }
+
+    .response-box.show {
+      display: block;
+      opacity: 1;
+    }
+
+    .tags { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 20px; }
+    .tag {
+      background-color: #eaeaf0;
+      border-radius: 5px;
+      padding: 5px 10px;
+      font-size: 13px;
+    }
+    .section-title { font-weight: bold; margin: 15px 0 10px; }
+    .city-score { margin: 5px 0; }
+    .note { color: #666; font-size: 14px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <div>
+      <div class="logo">🤖 Azerconnect-AI</div>
+      <h4 style="display: flex; justify-content: space-between; align-items: center;">
+        Mövzular
+        <button onclick="addThread()" style="font-size: 14px; border: none; background: none; color: #3b82f6; cursor: pointer;">+ Yeni</button>
+      </h4>
+      <ul id="thread-list" style="list-style: none; padding-left: 10px;"></ul>
+    </div>
+    <div class="footer"><p>⚙ Parametrlər</p></div>
+  </div>
+
+  <div class="main">
+    <div class="menu-bar">
+      <span onclick="alert('Bu bölmə tezliklə aktiv olacaq.')">Ana səhifə</span>
+      <span onclick="alert('Bu bölmə tezliklə aktiv olacaq.')">İstifadəçi təlimatı</span>
+    </div>
+
+    <h2 class="header">Verilənləriniz haqqında daha çox məlumat əldə edin</h2>
+
+    <div class="cards">
+      <div class="card" onclick="useTemplate('Ən çox sifariş alan ilk 3 şəhər hansıdır?')">
+        <small>Reytinq</small>Ən çox sifariş alan ilk 3 şəhər hansıdır?
+      </div>
+      <div class="card" onclick="useTemplate('Hər bir şəhərdə müştərilər tərəfindən verilən sifarişlər üçün təqdim olunan rəylərin orta balı neçədir?')">
+        <small>Ümumiləşdirmə</small>Hər bir şəhərdə müştərilər tərəfindən verilən sifarişlər üçün təqdim olunan rəylərin orta balı neçədir?
+      </div>
+      <div class="card" onclick="useTemplate('Şəhərlər üzrə xərclər')">
+        <small>Ümumiləşdirmə</small>Şəhərlər üzrə xərclər
+      </div>
+    </div>
+
+    <div id="loading-message" style="display:none; margin-bottom: 20px; color: #555;">Sorğunuz işlənilir...</div>
+
+    <div id="response" class="response-box">
+      <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+        <button onclick="showTab('answer')" style="padding: 6px 12px;" id="btn-answer">Cavab</button>
+        <button onclick="showTab('sql')" style="padding: 6px 12px;" id="btn-sql">SQL Kodu</button>
+        <button onclick="showTab('chart')" style="padding: 6px 12px;" id="btn-chart">Qrafik</button>
+      </div>
+
+      <div id="answer-tab" class="response-tab">
+        <div id="response-content"></div>
+      </div>
+
+      <div id="sql-tab" class="response-tab" style="display:none; white-space: pre-wrap; background: #f9f9f9; padding: 10px; border-radius: 6px;">
+        SELECT customer_city, COUNT(*) AS total_orders
+        FROM orders
+        JOIN customers ON orders.customer_id = customers.customer_id
+        GROUP BY customer_city
+        ORDER BY total_orders DESC
+        LIMIT 3;
+      </div>
+
+      <div id="chart-tab" class="response-tab" style="display:none;">
+        <h4>Top Ödəniş Tipləri üzrə Sifarişlər</h4>
+        <div style="display: flex; align-items: flex-end; height: 150px; gap: 20px; padding: 20px 0;">
+          <div style="width: 60px; height: 140px; background: linear-gradient(to top, #4f46e5, #a5b4fc); text-align: center;">Kredit</div>
+          <div style="width: 60px; height: 30px; background: linear-gradient(to top, #10b981, #6ee7b7); text-align: center;">Nağd</div>
+        </div>
+        <div style="display: flex; gap: 38px; font-size: 12px; margin-top: 5px;">
+          <span>Kredit Kartı</span>
+          <span>Nağd</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-bar">
+      <input type="text" placeholder="Məlumatlarınızı araşdırmaq üçün sorğu verin" />
+      <button>Soruş</button>
+    </div>
+
+  </div>
+
+  <style>
+    .thread-menu {
+      position: relative;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 0 6px;
+    }
+    .menu-popup {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 20px;
+      background: white;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 5px 10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      z-index: 100;
+    }
+    .thread-menu:hover .menu-popup {
+      display: block;
+    }
+    .menu-popup button {
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: red;
+      font-size: 14px;
+    }
+  </style>
+
+  <script>
+    const content = {
+      ranking: `
+        <h3>Ən çox sifariş alan şəhərlər</h3>
+        <div class="section-title">Top 3</div>
+        <div class="city-score">1. São Paulo – 15,540 sifariş</div>
+        <div class="city-score">2. Rio de Janeiro – 6,882 sifariş</div>
+        <div class="city-score">3. Belo Horizonte – 2,773 sifariş</div>
+        <p class="note">Bu şəhərlər ən çox sifariş alan bölgələrdir.</p>
+      `,
+      avg_review: `
+        <h3>Orta Rəy Balı üzrə Şəhərlər</h3>
+        <div class="section-title">Nümunə cavablar</div>
+        <div class="city-score">• abadia dos dourados – 5</div>
+        <div class="city-score">• abadiania – 4</div>
+        <div class="city-score">• abaete – 4.17</div>
+        <div class="city-score">• abaetetuba – 3.55</div>
+        <div class="city-score">• abaiara – 4.5</div>
+        <p class="note">Bu siyahı müştəri şəhərinə görə orta rəy ballarını göstərir.</p>
+      `,
+      total_payment: `
+        <h3>Rayonlar üzrə Ümumi Ödənişlər</h3>
+        <div class="section-title">Nümunə nəticələr</div>
+        <div class="city-score">• São Paulo – 1,200,000 AZN</div>
+        <div class="city-score">• Rio de Janeiro – 850,000 AZN</div>
+        <div class="city-score">• Campinas – 700,000 AZN</div>
+        <p class="note">Bu məlumat müştərilərin yaşadığı rayonlara görə ümumi ödənişləri əks etdirir.</p>
+      `
+    };
+
+    let current = null;
+
+    function toggleResponse(type) {
+      const box = document.getElementById("response");
+      const html = content[type];
+
+      if (current === type && box.classList.contains("show")) {
+        box.classList.remove("show");
+        current = null;
+      } else {
+        document.getElementById("response-content").innerHTML = html;
+        box.classList.add("show");
+        current = type;
+      }
+    }
+
+    function addThread() {
+      const text = prompt("Yeni mövzu daxil edin:");
+      if (text) {
+        inputField.value = text; // Fill the input field with the new query
+        submitQuery();           // Automatically submit it
+      }
+    }
+
+    function toggleMenu(menu) {
+      const popup = menu.querySelector(".menu-popup");
+      popup.style.display = (popup.style.display === "block") ? "none" : "block";
+    }
+
+    function deleteThread(button) {
+      const li = button.closest("li");
+      li.remove();
+    }
+
+    function showTab(tab) {
+      document.getElementById("answer-tab").style.display = "none";
+      document.getElementById("sql-tab").style.display = "none";
+      document.getElementById("chart-tab").style.display = "none";
+
+      document.getElementById("btn-answer").style.background = "";
+      document.getElementById("btn-sql").style.background = "";
+      document.getElementById("btn-chart").style.background = "";
+
+      if (tab === 'answer') {
+        document.getElementById("answer-tab").style.display = "block";
+        document.getElementById("btn-answer").style.background = "#e0e7ff";
+      } else if (tab === 'sql') {
+        document.getElementById("sql-tab").style.display = "block";
+        document.getElementById("btn-sql").style.background = "#e0e7ff";
+      } else if (tab === 'chart') {
+        document.getElementById("chart-tab").style.display = "block";
+        document.getElementById("btn-chart").style.background = "#e0e7ff";
+      }
+    }
+
+      const inputField = document.querySelector(".footer-bar input");
+      const askButton = document.querySelector(".footer-bar button");
+
+      const threadResponses = {};
+
+      function addThreadItem(text) {
+        const li = document.createElement("li");
+        li.style.display = "flex";
+        li.style.justifyContent = "space-between";
+        li.style.alignItems = "center";
+
+        const span = document.createElement("span");
+        span.textContent = "• " + text;
+        span.style.cursor = "pointer";
+        span.onclick = function () {
+          const stored = threadResponses[text];
+          if (stored) {
+            document.getElementById("response").classList.add("show");
+            showTab("answer");
+            document.getElementById("response-content").innerHTML = formatSummary(stored.summary);
+            document.getElementById("sql-tab").innerText = stored.sql;
+            document.getElementById("chart-tab").innerHTML = generateChartHTML(stored.table);
+          }
+        };
+
+        const menu = document.createElement("div");
+        menu.className = "thread-menu";
+        menu.textContent = "⋮";
+        menu.onclick = function () {
+          toggleMenu(menu);
+        };
+
+        const popup = document.createElement("div");
+        popup.className = "menu-popup";
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "Sil";
+        delBtn.onclick = function () {
+          li.remove();
+        };
+
+        popup.appendChild(delBtn);
+        menu.appendChild(popup);
+        li.appendChild(span);
+        li.appendChild(menu);
+        document.getElementById("thread-list").appendChild(li);
+      }
+
+      function formatSummary(rawText) {
+        // Convert **bold** to <strong>
+        let html = rawText.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+
+        // Convert numbered lists (1. 2. 3...) into <ol><li>...</li></ol>
+        html = html.replace(/(?:^|\n)(\d+)\.\s+(.*?)(?=\n\d+\.|\n*$)/gs, (match, num, item) => {
+          // Split by number+dot and wrap in <li>
+          const lines = match.trim().split(/\n\d+\.\s+/).filter(Boolean);
+          if (lines.length > 1 || match.startsWith("1.")) {
+            return `<ol style="padding-left: 20px;">` + lines.map(l => `<li>${l.trim()}</li>`).join("") + `</ol>`;
+          }
+          return match;
+        });
+
+        // Convert "- ..." bullet points to <ul><li>...</li></ul>
+        html = html.replace(/(?:^|\n)-\s+(.*?)(?=\n-\s+|\n*$)/gs, (match) => {
+          const items = match.trim().split(/\n-\s+/).filter(Boolean);
+          return `<ul style="padding-left: 20px;">` + items.map(i => `<li>${i}</li>`).join("") + `</ul>`;
+        });
+
+        return html;
+      }
+
+      function submitQuery() {
+        const query = inputField.value.trim();
+        if (!query) return;
+
+        // Show loading message
+        document.getElementById("loading-message").style.display = "block";
+
+        fetch("/api/query/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCookie("csrftoken"),
+          },
+          body: JSON.stringify({ query }),
+        })
+        .then((res) => res.json())
+        .then((data) => {
+          document.getElementById("loading-message").style.display = "none"; // hide after response
+
+          if (data.error) {
+            const friendlyMessage = "Bu sorğu verilənlər bazasında əks olunmayıb və ya uyğun deyil.";
+            document.getElementById("response").classList.add("show");
+            showTab("answer");
+
+            document.getElementById("response-content").innerHTML = `
+              <div style="color: #b91c1c; background: #fef2f2; padding: 15px; border: 1px solid #fca5a5; border-radius: 8px;">
+                <strong>Xəta:</strong> ${friendlyMessage}
+              </div>
+            `;
+
+            document.getElementById("sql-tab").innerText = "";
+            document.getElementById("chart-tab").innerHTML = "";
+            return;
+          }
+
+          document.getElementById("response").classList.add("show");
+          showTab("answer");
+
+          const summary = data.summary || "Açıqlama mövcud deyil.";
+          const sql = data.sql || "SQL tapılmadı.";
+          const table = data.table || [];
+
+          document.getElementById("response-content").innerHTML = formatSummary(summary);
+          document.getElementById("sql-tab").innerText = sql;
+          document.getElementById("chart-tab").innerHTML = generateChartHTML(table);
+
+          threadResponses[query] = { summary, sql, table };
+          addThreadItem(query);
+        })
+        .catch((err) => {
+          document.getElementById("loading-message").style.display = "none";
+
+          const friendlyMessage = "Bu sorğu verilənlər bazasında əks olunmayıb və ya uyğun deyil.";
+          document.getElementById("response").classList.add("show");
+          showTab("answer");
+
+          document.getElementById("response-content").innerHTML = `
+            <div style="color: #b91c1c; background: #fef2f2; padding: 15px; border: 1px solid #fca5a5; border-radius: 8px;">
+              <strong>Xəta:</strong> ${friendlyMessage}
+            </div>
+          `;
+
+          // Optionally clear the other tabs
+          document.getElementById("sql-tab").innerText = "";
+          document.getElementById("chart-tab").innerHTML = "";
+        });
+
+        inputField.value = ""; // Clear input
+      }
+
+      // Submit on button click
+      askButton.addEventListener("click", submitQuery);
+
+      // Submit on Enter key
+      inputField.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          submitQuery();
+        }
+      });
+
+    function generateChartHTML(data) {
+      if (!Array.isArray(data)) return "Vizual məlumat tapılmadı.";
+
+      const maxValue = Math.max(...data.map(row => {
+        return Object.values(row).find(v => typeof v === 'number') || 1;
+      }));
+
+      return `
+        <h4>Nəticələrə əsasən vizual</h4>
+        <div style="display: flex; gap: 20px; align-items: flex-end; height: 160px;">
+          ${data.map(row => {
+            const value = Object.values(row).find(v => typeof v === 'number') || 0;
+            const height = Math.round((value / maxValue) * 140); // scale to max height
+            const label = row.customer || row.city || Object.values(row)[0];
+            return `<div style="width: 60px; height: ${height}px; background: linear-gradient(to top, #4f46e5, #a5b4fc); text-align: center; color: white; border-radius: 4px;">${label}</div>`;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    // Helper to get CSRF token
+    function getCookie(name) {
+      let cookieValue = null;
+      if (document.cookie && document.cookie !== "") {
+        const cookies = document.cookie.split(";");
+        for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === name + "=") {
+            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+            break;
+          }
+        }
+      }
+      return cookieValue;
+    }
+
+    function useTemplate(text) {
+      const inputField = document.querySelector(".footer-bar input");
+      inputField.value = text;
+      inputField.focus(); // OR submitQuery(); ← optional auto-submit
+    }
+
+
+  </script>
+</body>
+</html>
