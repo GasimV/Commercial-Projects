@@ -1,0 +1,13 @@
+stable-ts~=2.19.0
+torch~=2.7.1
+torchaudio~=2.7.1
+transformers~=4.52.4
+pydub~=0.25.1
+fastapi~=0.115.13
+uvicorn~=0.34.3
+watchdog~=6.0.0
+pyannote.audio
+denoiser~=0.1.5
+joblib~=1.5.1
+aiofiles
+python-dotenv~=1.1.0

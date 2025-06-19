@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Logs and debug
+*.log
+*.tmp
+debug/
+*.bak
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Environments
+.venv/
+env/
+venv/
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models and large files
+*.pt
+*.pkl
+*.bin
+*.wav
+*.mp3
+*.flac
+records/
+watch_folder/
+
+# Token files / secrets
+*.token
+.env
+
+# Audio and model folders
+records/
+watch_folder/
+knn_model/
+mt5-summarize-callcenter-az-final/
+speakar-idenfication/
