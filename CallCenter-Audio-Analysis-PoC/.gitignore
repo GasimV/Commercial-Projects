@@ -7,6 +7,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.pth
+*.csv
+*.docx
 
 # Logs and debug
 *.log
