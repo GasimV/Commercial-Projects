@@ -47,7 +47,8 @@ watch_folder/
 
 # Token files / secrets
 *.token
-.env
+*.env
+*env
 
 # Audio and model folders
 records/
