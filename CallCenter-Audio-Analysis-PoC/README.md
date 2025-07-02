@@ -128,6 +128,6 @@ python main.py
 
 ## 👤 Author
 
-This project was authored by **Gasym A. Valiyev** as part of a private proof-of-concept developed for **Pasha Bank**.
+This project was co-authored by **Gasym A. Valiyev** as part of a private proof-of-concept developed for **Pasha Bank**.
 
 ---
