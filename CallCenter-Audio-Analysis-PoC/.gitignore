@@ -56,3 +56,4 @@ watch_folder/
 knn_model/
 mt5-summarize-callcenter-az-final/
 speakar-idenfication/
+*whisper-az-small-finetuned/
