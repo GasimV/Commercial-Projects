@@ -1,8 +1,7 @@
 import torch
 import torch.nn.functional as F
 from typing import Tuple, List
-from transformers import AutoModelForSeq2SeqLM, AutoModelForSequenceClassification, AutoTokenizer
-from stable_whisper import load_model as load_sw_model
+from transformers import AutoModelForSeq2SeqLM, AutoModelForSequenceClassification, AutoTokenizer, WhisperForConditionalGeneration, WhisperProcessor, pipeline
 from io import BytesIO
 from pydub import AudioSegment
 from pyannote.audio import Pipeline
@@ -22,6 +21,7 @@ import threading
 import logging
 import queue
 import concurrent.futures
+from fastapi.staticfiles import StaticFiles
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -42,16 +42,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# This tells FastAPI that any request starting with /audio should be served from the WATCH_FOLDER.
+app.mount("/audio", StaticFiles(directory=r"C:\Pasha-PoC\records\1003"), name="audio")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
-sw_model = load_sw_model("large-v3", device=device)
+# This block replaces the `sw_model = load_sw_model(...)` line.
+print("Loading the fine-tuned Whisper model...")
+ft_model_path = r"C:\Pasha-PoC\whisper-az-small-finetuned"
+ft_model = WhisperForConditionalGeneration.from_pretrained(ft_model_path).to(device)
+ft_processor = WhisperProcessor.from_pretrained(ft_model_path)
 
-WATCH_FOLDER = r"C:\Pasha-PoC\records\1005"
+# Ensure the generation config is set correctly
+#ft_model.config.forced_decoder_ids = ft_processor.get_decoder_prompt_ids(language="azerbaijani", task="transcribe")
+
+# Create a pipeline for the fine-tuned model WITH LONG-FORM TRANSCRIPTION ENABLED
+print("Creating fine-tuned pipeline with long-form audio support...")
+
+# Define generation arguments to prevent repetition and specify the task
+generate_kwargs = {
+    "language": "azerbaijani",
+    "task": "transcribe",
+    "no_repeat_ngram_size": 3 # This is the key to stopping "Ədədədə..."
+}
+
+fine_tuned_pipe = pipeline(
+    "automatic-speech-recognition",
+    model=ft_model,
+    tokenizer=ft_processor.tokenizer,
+    feature_extractor=ft_processor.feature_extractor,
+    device=0 if device.type == "cuda" else -1, # Pass device index for cuda
+    chunk_length_s=30,
+    stride_length_s=6,
+    generate_kwargs=generate_kwargs
+)
+print("Fine-tuned model loaded and pipeline created successfully.")
+
+WATCH_FOLDER = r"C:\Pasha-PoC\records\1003"
 os.makedirs(WATCH_FOLDER, exist_ok=True)
 
 processor = CallProcessor(
     hf_token=os.getenv("HF_TOKEN"),
-    whisper_model=sw_model,
+    whisper_model=fine_tuned_pipe,
     id_model_path="./speakar-idenfication",
     sum_model_path="./mt5-summarize-callcenter-az-final",
     device="cuda" if torch.cuda.is_available() else "cpu"
@@ -148,10 +180,15 @@ class NewFileHandler(FileSystemEventHandler):
                 for output in processor.process_call(filepath):
                     print("*" * 100)
                     print(f"Stage: {output['stage']}")
-                    if output['stage'] != "summary":
-                        print("\n".join(output['result']))
+
+                    # <<< --- FIX: CORRECTED PRINT LOGIC --- >>>
+                    result_data = output['result']
+                    if isinstance(result_data, list):
+                        # If it's a list (like dialogue), join with newlines
+                        print("\n".join(result_data))
                     else:
-                        print(output['result'])
+                        # If it's a single string, print it directly
+                        print(result_data)
 
                     # Send real-time processing updates (thread-safe)
                     manager.queue_message({
@@ -578,6 +615,10 @@ async def get():
             color: #475569;
             line-height: 1.6;
             font-size: 0.9rem;
+            
+            max-height: 350px;     /* Set a maximum height for the content area */
+            overflow-y: auto;      /* Add a scrollbar only if content overflows */
+            padding-right: 0.5rem; /* Add some padding so scrollbar doesn't cover text */
         }
 
         .classification-result {
@@ -730,6 +771,7 @@ async def get():
             { key: 'file_detected', title: 'NEW FILE', subtitle: 'DETECTED', icon: '' },
             { key: 'dialogue', title: 'TRANSCRIPTION', subtitle: 'DIARIZATION + STT', icon: '' },
             { key: 'identified_dialogue', title: 'SPEAKER ID', subtitle: 'SPEAKER LABELING', icon: '' },
+            { key: 'emotion_analysis', title: 'EMOTION TREND', subtitle: 'CUSTOMER ANALYSIS', icon: '' }, // New Step
             { key: 'summary', title: 'SUMMARY', subtitle: 'GENERATION', icon: '' },
             { key: 'classification', title: 'CLASSIFICATION', subtitle: 'QUALITY ASSESSMENT', icon: '' }
         ];
@@ -856,7 +898,10 @@ async def get():
                 updateStep(filename, 'identified_dialogue', 'processing');
             } else if (stage === 'identified_dialogue') {
                 updateStep(filename, 'identified_dialogue', 'completed');
-                updateStep(filename, 'summary', 'processing');
+                updateStep(filename, 'emotion_analysis', 'processing'); // Next step is emotion analysis
+            } else if (stage === 'emotion_analysis') {
+                updateStep(filename, 'emotion_analysis', 'completed');
+                updateStep(filename, 'summary', 'processing'); // Next step is summary
             } else if (stage === 'summary') {
                 updateStep(filename, 'summary', 'completed');
                 updateStep(filename, 'classification', 'processing');
@@ -877,10 +922,19 @@ async def get():
             const resultItem = document.createElement('div');
             const isCollapsible = stage.toLowerCase().includes('dialogue');
             const isClassification = stage.toLowerCase() === 'classification';
+            const isEmotionAnalysis = stage.toLowerCase() === 'emotion_analysis';
             
             if (isCollapsible) {
                 resultItem.className = 'result-item collapsible-item';
-                const resultContent = Array.isArray(result) ? result.join('<br>') : result;
+                // Display emotion emojis next to the text
+                const resultContent = Array.isArray(result) ? result.map(line => {
+                    let coloredLine = line;
+                    coloredLine = coloredLine.replace(/\(hap\)/g, '<span>(😊 Happy)</span>');
+                    coloredLine = coloredLine.replace(/\(neu\)/g, '<span>(😐 Neutral)</span>');
+                    coloredLine = coloredLine.replace(/\(sad\)/g, '<span>(😢 Sad)</span>');
+                    coloredLine = coloredLine.replace(/\(ang\)/g, '<span>(😠 Angry)</span>');
+                    return coloredLine;
+                }).join('<br>') : result;
                 const collapsibleId = `collapsible-${filename}-${Date.now()}`;
 
                 resultItem.innerHTML = `
@@ -907,7 +961,17 @@ async def get():
                         </div>
                     </div>
                 `;
-            } else {
+            } else if (isEmotionAnalysis) {
+                // Specific styling for the emotion analysis card
+                resultItem.className = 'result-item';
+                resultItem.style.borderLeft = '4px solid #f97316'; // Distinct orange color
+
+                resultItem.innerHTML = `
+                    <div class="result-title" style="color: #c2410c;">EMOTION TREND ANALYSIS</div>
+                    <div class="result-content" style="font-weight: 500; font-size: 1.05rem;">${result}</div>
+                `;
+            }
+            else { // This will now handle the 'summary' stage
                 resultItem.className = 'result-item';
                 const resultContent = Array.isArray(result) ? result.join('<br>') : result;
 
