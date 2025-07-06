@@ -19,11 +19,11 @@ from typing import List
 
 # ========================== MODELS ==========================
 
-device = torch.device("cuda")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Diarizer:
-    def __init__(self, hf_token: str, emotion_pipeline, device="cuda",
+    def __init__(self, hf_token: str, emotion_pipeline, device=device,
                  debug_dir="./debug"):
         self.pipeline = Pipeline.from_pretrained(
             "pyannote/speaker-diarization-3.1",
@@ -31,7 +31,7 @@ class Diarizer:
         )
         self.device = device
         self.debug_dir = debug_dir
-        self.denoise_model = pretrained.dns64().to(device)
+        self.denoise_model = pretrained.dns64().to("cuda" if torch.cuda.is_available() else "cpu")
         self.emotion_pipeline = emotion_pipeline
 
     def denoise_audio(self, audio_path):
@@ -118,10 +118,10 @@ class Diarizer:
 
 
 class SpeakerIdentifier:
-    def __init__(self, model_path: str, device="cuda"):
+    def __init__(self, model_path: str, device=device):
         self.model_path = model_path
         self.tokenizer = BertTokenizer.from_pretrained(model_path)
-        self.model = BertForSequenceClassification.from_pretrained(model_path).to(device)
+        self.model = BertForSequenceClassification.from_pretrained(model_path).to("cuda" if torch.cuda.is_available() else "cpu")
         self.model.eval()
         self.device = device
 
@@ -198,9 +198,9 @@ class SpeakerIdentifier:
 
 
 class Summarizer:
-    def __init__(self, model_path: str, device="cuda"):
+    def __init__(self, model_path: str, device=device):
         self.device = device
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained("google/mt5-small")
 
     def summarize(self, dialogue: List[str]) -> str:
@@ -227,7 +227,7 @@ class Summarizer:
 
 
 class CallProcessor:
-    def __init__(self, hf_token: str, whisper_model, id_model_path: str, sum_model_path: str, device="cuda",
+    def __init__(self, hf_token: str, whisper_model, id_model_path: str, sum_model_path: str, device=device,
                  debug_dir="./debug"):
         # Initialize the emotion pipeline
         self.emotion_pipeline = pipeline(
@@ -247,7 +247,7 @@ class CallProcessor:
         self.tokenizer_bert = BertTokenizer.from_pretrained("bert-base-multilingual-uncased")
         self.bert_model = BertModel.from_pretrained("bert-base-multilingual-uncased")
         self.bert_model.eval()
-        self.bert_model.to(device)
+        self.bert_model.to("cuda" if torch.cuda.is_available() else "cpu")
         self.knn_model = joblib.load("knn_model/knn_model.pkl")
 
     def classify_transcription(self, wav_path):

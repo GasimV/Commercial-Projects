@@ -43,13 +43,13 @@ app.add_middleware(
 )
 
 # This tells FastAPI that any request starting with /audio should be served from the WATCH_FOLDER.
-app.mount("/audio", StaticFiles(directory=r"C:\Pasha-PoC\records\1003"), name="audio")
+app.mount("/audio", StaticFiles(directory=r"records/1003"), name="audio")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 # This block replaces the `sw_model = load_sw_model(...)` line.
 print("Loading the fine-tuned Whisper model...")
-ft_model_path = r"C:\Pasha-PoC\whisper-az-small-finetuned"
+ft_model_path = r"Preprocessing-and-STT-FT/whisper-az-small-finetuned"
 ft_model = WhisperForConditionalGeneration.from_pretrained(ft_model_path).to(device)
 ft_processor = WhisperProcessor.from_pretrained(ft_model_path)
 
@@ -78,7 +78,7 @@ fine_tuned_pipe = pipeline(
 )
 print("Fine-tuned model loaded and pipeline created successfully.")
 
-WATCH_FOLDER = r"C:\Pasha-PoC\records\1003"
+WATCH_FOLDER = r"records/1003"
 os.makedirs(WATCH_FOLDER, exist_ok=True)
 
 processor = CallProcessor(
@@ -266,7 +266,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/")
 async def get():
-    return HTMLResponse("""
+    return HTMLResponse(r"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
