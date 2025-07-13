@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
 from typing import Tuple, List
-from transformers import AutoModelForSeq2SeqLM, AutoModelForSequenceClassification, AutoTokenizer, WhisperForConditionalGeneration, WhisperProcessor, pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoModelForSequenceClassification, AutoTokenizer, \
+    WhisperForConditionalGeneration, WhisperProcessor, pipeline
 from io import BytesIO
 from pydub import AudioSegment
 from pyannote.audio import Pipeline
@@ -24,6 +25,7 @@ import concurrent.futures
 from fastapi.staticfiles import StaticFiles
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 # Configure logging
@@ -42,7 +44,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# This tells FastAPI that any request starting with /audio should be served from the WATCH_FOLDER.
+# This tells FastAPI that any request starting with /audio should be served from your WATCH_FOLDER.
 app.mount("/audio", StaticFiles(directory=r"records/1003"), name="audio")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,7 +56,7 @@ ft_model = WhisperForConditionalGeneration.from_pretrained(ft_model_path).to(dev
 ft_processor = WhisperProcessor.from_pretrained(ft_model_path)
 
 # Ensure the generation config is set correctly
-#ft_model.config.forced_decoder_ids = ft_processor.get_decoder_prompt_ids(language="azerbaijani", task="transcribe")
+# ft_model.config.forced_decoder_ids = ft_processor.get_decoder_prompt_ids(language="azerbaijani", task="transcribe")
 
 # Create a pipeline for the fine-tuned model WITH LONG-FORM TRANSCRIPTION ENABLED
 print("Creating fine-tuned pipeline with long-form audio support...")
@@ -63,7 +65,7 @@ print("Creating fine-tuned pipeline with long-form audio support...")
 generate_kwargs = {
     "language": "azerbaijani",
     "task": "transcribe",
-    "no_repeat_ngram_size": 3 # This is the key to stopping "Ədədədə..."
+    "no_repeat_ngram_size": 3  # This is the key to stopping "Ədədədə..."
 }
 
 fine_tuned_pipe = pipeline(
@@ -71,7 +73,7 @@ fine_tuned_pipe = pipeline(
     model=ft_model,
     tokenizer=ft_processor.tokenizer,
     feature_extractor=ft_processor.feature_extractor,
-    device=0 if device.type == "cuda" else -1, # Pass device index for cuda
+    device=0 if device.type == "cuda" else -1,  # Pass device index for cuda
     chunk_length_s=30,
     stride_length_s=6,
     generate_kwargs=generate_kwargs
@@ -86,7 +88,7 @@ processor = CallProcessor(
     whisper_model=fine_tuned_pipe,
     id_model_path="./speakar-idenfication",
     sum_model_path="./mt5-summarize-callcenter-az-final",
-    device="cuda" if torch.cuda.is_available() else "cpu"
+    device=device
 )
 
 # Store active WebSocket connections and message queue
@@ -454,6 +456,14 @@ async def get():
             box-shadow: none;
         }
 
+        .play-button::before {
+            content: '▶️'; /* Play icon */
+        }
+
+        .play-button.playing::before {
+            content: '⏸️'; /* Pause icon */
+        }
+
         .audio-player {
             display: none;
             margin-top: 1rem;
@@ -468,7 +478,7 @@ async def get():
 
         .steps-container {
             display: grid;
-            grid-template-columns: repeat(6, 1fr);
+            grid-template-columns: repeat(7, 1fr); /* <<< MODIFIED for 7 steps */
             gap: 1rem;
             margin-bottom: 2rem;
         }
@@ -598,6 +608,16 @@ async def get():
             background: rgba(139, 92, 246, 0.1);
             color: #6b21a8;
         }
+        
+        /* <<< CSS for Stars >>> */
+        .star-rating {
+            font-size: 1.5rem;
+            color: #f59e0b; /* Amber color for stars */
+            margin-bottom: 0.5rem;
+        }
+        .star-rating .empty {
+            color: #d1d5db; /* Gray for empty stars */
+        }
 
         .result-title {
             font-weight: 600;
@@ -615,7 +635,7 @@ async def get():
             color: #475569;
             line-height: 1.6;
             font-size: 0.9rem;
-            
+
             max-height: 350px;     /* Set a maximum height for the content area */
             overflow-y: auto;      /* Add a scrollbar only if content overflows */
             padding-right: 0.5rem; /* Add some padding so scrollbar doesn't cover text */
@@ -767,13 +787,15 @@ async def get():
 
         let currentFiles = {};
 
+        // <<< MODIFIED: Added topic_classification and renamed final step for clarity
         const stepConfig = [
-            { key: 'file_detected', title: 'NEW FILE', subtitle: 'DETECTED', icon: '' },
-            { key: 'dialogue', title: 'TRANSCRIPTION', subtitle: 'DIARIZATION + STT', icon: '' },
-            { key: 'identified_dialogue', title: 'SPEAKER ID', subtitle: 'SPEAKER LABELING', icon: '' },
-            { key: 'emotion_analysis', title: 'EMOTION TREND', subtitle: 'CUSTOMER ANALYSIS', icon: '' }, // New Step
-            { key: 'summary', title: 'SUMMARY', subtitle: 'GENERATION', icon: '' },
-            { key: 'classification', title: 'CLASSIFICATION', subtitle: 'QUALITY ASSESSMENT', icon: '' }
+            { key: 'file_detected', title: 'NEW FILE', subtitle: 'DETECTED', icon: '📥' },
+            { key: 'dialogue', title: 'TRANSCRIPTION', subtitle: 'DIARIZATION + STT', icon: '🎙️' },
+            { key: 'identified_dialogue', title: 'SPEAKER ID', subtitle: 'SPEAKER LABELING', icon: '👤' },
+            { key: 'emotion_analysis', title: 'EMOTION TREND', subtitle: 'CUSTOMER ANALYSIS', icon: '😊' },
+            { key: 'summary', title: 'SUMMARY', subtitle: 'GENERATION', icon: '📝' },
+            { key: 'topic_classification', title: 'TOPIC', subtitle: 'CLASSIFICATION', icon: '🏷️' },
+            { key: 'classification', title: 'QUALITY', subtitle: 'ASSESSMENT', icon: '⭐' }
         ];
 
         ws.onopen = function(event) {
@@ -829,9 +851,7 @@ async def get():
                         <div class="timestamp">${new Date(timestamp).toLocaleString()}</div>
                     </div>
                     <div class="audio-controls">
-                        <button class="play-button" onclick="toggleAudio('${filename}')" id="play-btn-${filename}">
-                            
-                        </button>
+                        <button class="play-button" onclick="toggleAudio('${filename}')" id="play-btn-${filename}"></button>
                     </div>
                 </div>
                 <div class="audio-player" id="audio-player-${filename}">
@@ -854,7 +874,7 @@ async def get():
                 <div class="results-section" id="results-${filename}" style="display: none;"></div>
             `;
 
-            processingGrid.appendChild(card);
+            processingGrid.prepend(card); // Prepend to show new files at the top
             currentFiles[filename] = { card, results: [] };
         }
 
@@ -863,20 +883,22 @@ async def get():
             const audio = document.getElementById(`audio-${filename}`);
             const playBtn = document.getElementById(`play-btn-${filename}`);
 
-            if (audioPlayer.style.display === 'none' || audioPlayer.style.display === '') {
-                audioPlayer.style.display = 'block';
-                playBtn.textContent = '';
-                audio.play();
-            } else {
-                audioPlayer.style.display = 'none';
-                playBtn.textContent = '';
+            const isPlaying = playBtn.classList.contains('playing');
+
+            if (isPlaying) {
                 audio.pause();
+                playBtn.classList.remove('playing');
+            } else {
+                 if (audioPlayer.style.display === 'none' || audioPlayer.style.display === '') {
+                    audioPlayer.style.display = 'block';
+                 }
+                audio.play();
+                playBtn.classList.add('playing');
             }
 
-            // Update button based on audio state
-            audio.addEventListener('play', () => playBtn.textContent = '');
-            audio.addEventListener('pause', () => playBtn.textContent = '');
-            audio.addEventListener('ended', () => playBtn.textContent = '');
+            audio.onended = () => {
+                playBtn.classList.remove('playing');
+            };
         }
 
         function updateStep(filename, stepKey, status) {
@@ -889,6 +911,7 @@ async def get():
             }
         }
 
+        // <<< MODIFIED: Updated to handle the new topic_classification step
         function handleProcessingUpdate(filename, data) {
             const stage = data.stage.toLowerCase();
 
@@ -898,12 +921,15 @@ async def get():
                 updateStep(filename, 'identified_dialogue', 'processing');
             } else if (stage === 'identified_dialogue') {
                 updateStep(filename, 'identified_dialogue', 'completed');
-                updateStep(filename, 'emotion_analysis', 'processing'); // Next step is emotion analysis
+                updateStep(filename, 'emotion_analysis', 'processing');
             } else if (stage === 'emotion_analysis') {
                 updateStep(filename, 'emotion_analysis', 'completed');
-                updateStep(filename, 'summary', 'processing'); // Next step is summary
+                updateStep(filename, 'summary', 'processing');
             } else if (stage === 'summary') {
                 updateStep(filename, 'summary', 'completed');
+                updateStep(filename, 'topic_classification', 'processing');
+            } else if (stage === 'topic_classification') {
+                updateStep(filename, 'topic_classification', 'completed');
                 updateStep(filename, 'classification', 'processing');
             } else if (stage === 'classification') {
                 updateStep(filename, 'classification', 'completed');
@@ -912,6 +938,7 @@ async def get():
             addResult(filename, stage, data.result);
         }
 
+        // <<< MODIFIED: Updated to render the topic_classification result
         function addResult(filename, stage, result) {
             const fileData = currentFiles[filename];
             if (!fileData) return;
@@ -921,12 +948,12 @@ async def get():
 
             const resultItem = document.createElement('div');
             const isCollapsible = stage.toLowerCase().includes('dialogue');
-            const isClassification = stage.toLowerCase() === 'classification';
+            const isClassification = stage.toLowerCase() === 'classification' && typeof result === 'object';
             const isEmotionAnalysis = stage.toLowerCase() === 'emotion_analysis';
-            
+            const isTopicClassification = stage.toLowerCase() === 'topic_classification';
+
             if (isCollapsible) {
                 resultItem.className = 'result-item collapsible-item';
-                // Display emotion emojis next to the text
                 const resultContent = Array.isArray(result) ? result.map(line => {
                     let coloredLine = line;
                     coloredLine = coloredLine.replace(/\(hap\)/g, '<span>(😊 Happy)</span>');
@@ -950,28 +977,45 @@ async def get():
                 `;
             } else if (isClassification) {
                 resultItem.className = 'result-item classification';
-                const isGoodService = result.includes('yaxşı') || result.includes('good');
+                const { label, score } = result; // Destructure the result object
+                
+                const isGoodService = score >= 4;
                 const classificationClass = isGoodService ? 'classification-good' : 'classification-bad';
                 
+                // Function to generate star HTML
+                const renderStars = (rating) => {
+                    let stars = '';
+                    for (let i = 1; i <= 5; i++) {
+                        stars += i <= rating ? '★' : '<span class="empty">☆</span>';
+                    }
+                    return stars;
+                };
+
                 resultItem.innerHTML = `
-                    <div class="result-title">QUALITY CLASSIFICATION</div>
-                    <div class="result-content">
+                    <div class="result-title">QUALITY ASSESSMENT</div>
+                    <div class="result-content" style="text-align: center;">
+                        <div class="star-rating">${renderStars(score)}</div>
                         <div class="classification-result ${classificationClass}">
-                            ${result}
+                            ${label}
                         </div>
                     </div>
                 `;
             } else if (isEmotionAnalysis) {
-                // Specific styling for the emotion analysis card
                 resultItem.className = 'result-item';
-                resultItem.style.borderLeft = '4px solid #f97316'; // Distinct orange color
-
+                resultItem.style.borderLeft = '4px solid #f97316'; // Orange color
                 resultItem.innerHTML = `
                     <div class="result-title" style="color: #c2410c;">EMOTION TREND ANALYSIS</div>
                     <div class="result-content" style="font-weight: 500; font-size: 1.05rem;">${result}</div>
                 `;
+            } else if (isTopicClassification) {
+                resultItem.className = 'result-item';
+                resultItem.style.borderLeft = '4px solid #d946ef'; // Fuchsia color
+                resultItem.innerHTML = `
+                    <div class="result-title" style="color: #86198f;">TOPIC CLASSIFICATION</div>
+                    <div class="result-content" style="font-weight: 500; font-size: 1.05rem;">${result}</div>
+                `;
             }
-            else { // This will now handle the 'summary' stage
+            else { // This handles 'summary' and any other stages
                 resultItem.className = 'result-item';
                 const resultContent = Array.isArray(result) ? result.join('<br>') : result;
 
@@ -987,7 +1031,7 @@ async def get():
         function toggleCollapsible(id) {
             const content = document.getElementById(id);
             const icon = content.previousElementSibling.querySelector('.toggle-icon');
-            
+
             if (content.classList.contains('expanded')) {
                 content.classList.remove('expanded');
                 icon.classList.remove('expanded');

@@ -1,0 +1,44 @@
+@startuml
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+package "Pasha-Bank Call Center Audio Analysis PoC App" {
+  
+  [FastAPI App] --> [WebSocket Manager]
+  [FastAPI App] --> [File Watcher]
+  [FastAPI App] --> [CallProcessor]
+  [FastAPI App] --> [Static Files Server]
+
+  [File Watcher] --> [CallProcessor]
+  [File Watcher] --> [WebSocket Manager] : Send Events
+
+  [WebSocket Manager] --> [WebSocket Clients]
+
+  [CallProcessor] --> [Diarizer]
+  [CallProcessor] --> [SpeakerIdentifier]
+  [CallProcessor] --> [Summarizer]
+  [CallProcessor] --> [Whisper ASR Pipeline]
+  [CallProcessor] --> [Emotion Analysis Pipeline]
+  [CallProcessor] --> [TopicClassifier]
+  [CallProcessor] --> [QualityClassifier]
+
+  [Diarizer] --> [PyAnnote Pipeline]
+  [Diarizer] --> [Denoiser Model]
+  [Diarizer] --> [Emotion Analysis Pipeline]
+
+  [SpeakerIdentifier] --> [BERT Model (Speaker ID)]
+  [Summarizer] --> [mT5 Model]
+
+  [Whisper ASR Pipeline] --> [Fine-tuned Whisper Model]
+  [Whisper ASR Pipeline] --> [Whisper Processor]
+
+  [Emotion Analysis Pipeline] --> [Wav2Vec2 Emotion Model]
+  [TopicClassifier] --> [mDeBERTa NLI Model]
+  [QualityClassifier] --> [Multilingual BERT Sentiment Model]
+
+  [Static Files Server] --> [Frontend UI]
+
+}
+
+@enduml

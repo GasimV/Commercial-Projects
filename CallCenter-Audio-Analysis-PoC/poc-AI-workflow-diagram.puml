@@ -1,0 +1,42 @@
+@startuml
+title AI Workflow for Call Center Audio Analysis
+
+start
+
+:New Audio File Detected;
+
+:Apply Noise Reduction;
+note right: Facebook Research Denoiser (DNS64)
+
+:Perform Diarization;
+note right: pyannote Speaker Diarization (v3.1)
+
+:Speech Segmentation & Transcription;
+note right: Fine-tuned Whisper (Azerbaijani)
+
+:Run Emotion Detection per Segment;
+note right: Wav2Vec2-based Emotion Classifier
+
+:Merge Speaker Turns;
+note right: Based on diarization continuity
+
+:Identify Speaker Roles;
+note right: Fine-tuned BERT (Customer/Operator)
+
+:Analyze Customer Emotion Trend;
+note right: Tracks emotional shifts in conversation
+
+:Generate Summary;
+note right: Fine-tuned mT5 (Multilingual Summarizer)
+
+:Classify Topic (2-step);
+note right: mDeBERTa-based Zero-Shot Classifier
+
+:Evaluate Call Quality;
+note right: Multilingual BERT Sentiment Classifier (1–5 stars)
+
+:Emit Results for UI/WebSocket;
+
+stop
+
+@enduml
