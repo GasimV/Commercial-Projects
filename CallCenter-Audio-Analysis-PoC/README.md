@@ -65,7 +65,7 @@ This project performs an end-to-end audio analysis through a sophisticated pipel
 
 1.  **Clone this repo:**
     ```bash
-    git clone <repository_url>
+    git clone https://github.com/GasimV/Commercial-Projects.git
     cd CallCenter-Audio-Analysis-PoC
     ```
 
