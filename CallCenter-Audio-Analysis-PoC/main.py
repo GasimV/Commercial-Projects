@@ -14,7 +14,7 @@ import asyncio
 from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -44,8 +44,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+WATCH_FOLDER = r"records/1003"
+os.makedirs(WATCH_FOLDER, exist_ok=True)
+
 # This tells FastAPI that any request starting with /audio should be served from your WATCH_FOLDER.
-app.mount("/audio", StaticFiles(directory=r"records/1003"), name="audio")
+app.mount("/audio", StaticFiles(directory=WATCH_FOLDER), name="audio")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -54,9 +57,6 @@ print("Loading the fine-tuned Whisper model...")
 ft_model_path = r"Preprocessing-and-STT-FT/whisper-az-small-finetuned"
 ft_model = WhisperForConditionalGeneration.from_pretrained(ft_model_path).to(device)
 ft_processor = WhisperProcessor.from_pretrained(ft_model_path)
-
-# Ensure the generation config is set correctly
-# ft_model.config.forced_decoder_ids = ft_processor.get_decoder_prompt_ids(language="azerbaijani", task="transcribe")
 
 # Create a pipeline for the fine-tuned model WITH LONG-FORM TRANSCRIPTION ENABLED
 print("Creating fine-tuned pipeline with long-form audio support...")
@@ -80,8 +80,6 @@ fine_tuned_pipe = pipeline(
 )
 print("Fine-tuned model loaded and pipeline created successfully.")
 
-WATCH_FOLDER = r"records/1003"
-os.makedirs(WATCH_FOLDER, exist_ok=True)
 
 processor = CallProcessor(
     hf_token=os.getenv("HF_TOKEN"),
@@ -223,6 +221,38 @@ class NewFileHandler(FileSystemEventHandler):
                 })
 
 
+@app.post("/upload-audio")
+async def upload_live_audio(file: UploadFile):
+    """
+    Receives audio from the browser, converts it to a standard WAV format,
+    and saves it to the WATCH_FOLDER for processing.
+    """
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"live_recording_{timestamp}.wav"
+        save_path = os.path.join(WATCH_FOLDER, filename)
+
+        # Read the uploaded file into memory
+        contents = await file.read()
+
+        # Use pydub to load the audio from memory. It can handle various formats
+        # like WebM from the browser, even if it has a .wav extension.
+        audio_segment = AudioSegment.from_file(BytesIO(contents))
+
+        # Convert to a standard format for AI models: 16kHz, mono, 16-bit PCM
+        audio_segment = audio_segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+
+        # Export the standardized audio to the final file
+        audio_segment.export(save_path, format="wav")
+
+        logger.info(f"Live recording converted and saved successfully as {filename}")
+        return {"status": "success", "filename": filename}
+
+    except Exception as e:
+        logger.error(f"Failed to convert and save live recording: {e}")
+        raise HTTPException(status_code=500, detail=f"Could not save file: {str(e)}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks"""
@@ -310,6 +340,70 @@ async def get():
             font-weight: 700;
             margin-bottom: 0.5rem;
             text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        
+        .recording-panel {
+            background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 1.5rem 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            text-align: center;
+        }
+
+        .recording-panel h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #1e293b;
+        }
+        
+        .recording-controls button {
+            font-size: 1rem;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 12px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 0 0.5rem;
+        }
+
+        #recordButton {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+        }
+        #recordButton:hover {
+             transform: scale(1.05);
+        }
+        #recordButton:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        #stopButton {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            color: white;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+        #stopButton:hover {
+            transform: scale(1.05);
+        }
+        #stopButton:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        #recordingStatus {
+            margin-top: 1rem;
+            font-weight: 500;
+            color: #475569;
         }
 
         .status-bar {
@@ -763,6 +857,16 @@ async def get():
             <h1>POC: CALL CENTER SUMMARIZATION</h1>
         </div>
 
+        <!-- Live Recording Panel -->
+        <div class="recording-panel">
+            <h2>Live Recording Demo</h2>
+            <div class="recording-controls">
+                <button id="recordButton">🔴 Record</button>
+                <button id="stopButton" disabled>⏹️ Stop</button>
+            </div>
+            <div id="recordingStatus">Click 'Record' to start</div>
+        </div>
+
         <div class="status-bar">
             <div class="connection-status">
                 <div id="status-dot" class="status-dot disconnected"></div>
@@ -812,6 +916,68 @@ async def get():
             const data = JSON.parse(event.data);
             handleMessage(data);
         };
+        
+        // --- JAVASCRIPT FOR LIVE RECORDING ---
+        const recordButton = document.getElementById('recordButton');
+        const stopButton = document.getElementById('stopButton');
+        const recordingStatus = document.getElementById('recordingStatus');
+        
+        let mediaRecorder;
+        let audioChunks = [];
+
+        recordButton.addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = event => {
+                    audioChunks.push(event.data);
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const formData = new FormData();
+                    formData.append('file', audioBlob, 'live_recording.wav');
+                    
+                    recordingStatus.textContent = 'Uploading and processing...';
+
+                    fetch('/upload-audio', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Upload successful:', data);
+                        recordingStatus.textContent = `File ${data.filename} uploaded. Processing will start shortly.`;
+                        setTimeout(() => {
+                           recordingStatus.textContent = "Click 'Record' to start";
+                        }, 5000);
+                    })
+                    .catch(error => {
+                        console.error('Upload failed:', error);
+                        recordingStatus.textContent = 'Upload failed. Please try again.';
+                    });
+
+                    audioChunks = [];
+                };
+
+                mediaRecorder.start();
+                recordButton.disabled = true;
+                stopButton.disabled = false;
+                recordingStatus.textContent = 'Recording... Speak into the microphone.';
+
+            } catch (err) {
+                console.error("Error accessing microphone:", err);
+                recordingStatus.textContent = 'Microphone access denied. Please allow microphone access in your browser settings.';
+            }
+        });
+
+        stopButton.addEventListener('click', () => {
+            mediaRecorder.stop();
+            recordButton.disabled = false;
+            stopButton.disabled = true;
+            recordingStatus.textContent = 'Recording stopped. Preparing for upload...';
+        });
 
         function handleMessage(data) {
             if (data.type === 'heartbeat' || data.type === 'connection_established') return;
