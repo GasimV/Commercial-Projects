@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AI Order Recommendation Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>AI Order Recommendation Demo</h1>
+
+    <section class="block">
+      <h2>1) Train Models</h2>
+      <div>
+        <label>N days:</label>
+        <input type="number" id="nDays" value="14" min="1" max="60" />
+        <button id="trainBtn">Train</button>
+        <pre id="trainOut"></pre>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>2) Likelihood</h2>
+      <label>Customer ID:</label>
+      <input type="number" id="custId1" value="1" min="1" />
+      <button id="likBtn">Get Likelihood</button>
+      <pre id="likOut"></pre>
+    </section>
+
+    <section class="block">
+      <h2>3) Quantity</h2>
+      <label>Customer ID:</label>
+      <input type="number" id="custId2" value="1" min="1" />
+      <button id="qtyBtn">Get Quantity</button>
+      <pre id="qtyOut"></pre>
+    </section>
+
+    <section class="block">
+      <h2>4) Recommendations</h2>
+      <label>Customer ID:</label>
+      <input type="number" id="custId3" value="1" min="1" />
+      <label>K:</label>
+      <input type="number" id="topK" value="8" min="1" max="20" />
+      <button id="recBtn">Recommend</button>
+      <pre id="recOut"></pre>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

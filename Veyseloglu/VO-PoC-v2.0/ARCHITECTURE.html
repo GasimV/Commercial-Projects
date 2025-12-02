@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Architecture - Advanced Reorder Prediction</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0a0e17 0%, #1a2332 100%);
+            color: #e8f1ff;
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #00d9ff 0%, #0066ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #94a8c4;
+            margin-bottom: 40px;
+        }
+        
+        .layer {
+            background: rgba(30, 41, 54, 0.6);
+            border: 1px solid rgba(148, 168, 196, 0.2);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+        
+        .layer:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 40px rgba(0, 217, 255, 0.2);
+            border-color: rgba(0, 217, 255, 0.4);
+        }
+        
+        .layer-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #00d9ff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .layer-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 35px;
+            height: 35px;
+            background: linear-gradient(135deg, #00d9ff 0%, #0066ff 100%);
+            border-radius: 50%;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .components {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .component {
+            background: rgba(37, 50, 68, 0.8);
+            border: 1px solid rgba(148, 168, 196, 0.15);
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+        
+        .component:hover {
+            background: rgba(37, 50, 68, 1);
+            border-color: rgba(0, 217, 255, 0.5);
+        }
+        
+        .component-title {
+            font-weight: 600;
+            color: #00ff88;
+            margin-bottom: 8px;
+            font-size: 1.1rem;
+        }
+        
+        .component-desc {
+            color: #94a8c4;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+        
+        .tech-list {
+            list-style: none;
+            margin-top: 10px;
+        }
+        
+        .tech-list li {
+            padding: 5px 0;
+            color: #94a8c4;
+            font-size: 0.85rem;
+        }
+        
+        .tech-list li:before {
+            content: "▹ ";
+            color: #00d9ff;
+            font-weight: bold;
+        }
+        
+        .arrow {
+            text-align: center;
+            font-size: 2rem;
+            color: #00d9ff;
+            margin: 20px 0;
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(0, 217, 255, 0.1);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #00d9ff;
+            display: block;
+        }
+        
+        .stat-label {
+            color: #94a8c4;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+        
+        .flow-diagram {
+            background: rgba(30, 41, 54, 0.4);
+            border: 1px solid rgba(148, 168, 196, 0.2);
+            border-radius: 12px;
+            padding: 30px;
+            margin-top: 30px;
+        }
+        
+        .flow-step {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .flow-icon {
+            min-width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #00d9ff 0%, #0066ff 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .flow-content h3 {
+            color: #00ff88;
+            margin-bottom: 5px;
+        }
+        
+        .flow-content p {
+            color: #94a8c4;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>System Architecture</h1>
+        <p class="subtitle">Advanced AI-Powered Reorder Prediction System</p>
+        
+        <!-- Layer 1: Frontend -->
+        <div class="layer">
+            <div class="layer-title">
+                <span class="layer-number">1</span>
+                User Interface Layer
+            </div>
+            <p style="color: #94a8c4; margin-bottom: 15px;">
+                Modern web interface with real-time predictions and interactive visualizations
+            </p>
+            <div class="components">
+                <div class="component">
+                    <div class="component-title">HTML5 Interface</div>
+                    <div class="component-desc">
+                        Responsive single-page application with drag-and-drop file upload
+                    </div>
+                </div>
+                <div class="component">
+                    <div class="component-title">CSS3 Styling</div>
+                    <div class="component-desc">
+                        Deep tech aesthetic with dark theme, animations, and micro-interactions
+                    </div>
+                </div>
+                <div class="component">
+                    <div class="component-title">JavaScript App</div>
+                    <div class="component-desc">
+                        Vanilla JS application logic with async API calls and state management
+                    </div>
+                </div>
+                <div class="component">
+                    <div class="component-title">Chart.js Viz</div>
+                    <div class="component-desc">
+                        Interactive charts for model comparison and performance metrics
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="arrow">↓</div>
+        
+        <!-- Layer 2: API -->
+        <div class="layer">
+            <div class="layer-title">
+                <span class="layer-number">2</span>
+                API Layer (FastAPI)
+            </div>
+            <p style="color: #94a8c4; margin-bottom: 15px;">
+                RESTful API with 15 endpoints for data upload, training, and inference
+            </p>
+            <div class="components">
+                <div class="component">
+                    <div class="component-title">Data Upload</div>
+                    <div class="component-desc">
+                        CSV file processing with validation and summary statistics
+                    </div>
+                    <ul class="tech-list">
+                        <li>POST /upload_data</li>
+                        <li>GET /data_summary</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Training Endpoints</div>
+                    <div class="component-desc">
+                        Model training orchestration with progress tracking
+                    </div>
+                    <ul class="tech-list">
+                        <li>POST /train</li>
+                        <li>GET /model_metrics</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Prediction Endpoints</div>
+                    <div class="component-desc">
+                        Real-time predictions for customers and products
+                    </div>
+                    <ul class="tech-list">
+                        <li>GET /predict/customer/{id}</li>
+                        <li>GET /predict/product/{id}</li>
+                        <li>POST /compare_models</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Metadata</div>
+                    <div class="component-desc">
+                        Customer and product listings with filters
+                    </div>
+                    <ul class="tech-list">
+                        <li>GET /customers</li>
+                        <li>GET /products</li>
+                        <li>GET /categories</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="arrow">↓</div>
+        
+        <!-- Layer 3: Feature Engineering -->
+        <div class="layer">
+            <div class="layer-title">
+                <span class="layer-number">3</span>
+                Feature Engineering Layer
+            </div>
+            <p style="color: #94a8c4; margin-bottom: 15px;">
+                Transforms raw sales data into 50+ ML-ready features across 7 categories
+            </p>
+            <div class="components">
+                <div class="component">
+                    <div class="component-title">Recency Features</div>
+                    <ul class="tech-list">
+                        <li>Days since last order</li>
+                        <li>Customer tenure</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Frequency Features</div>
+                    <ul class="tech-list">
+                        <li>Order count & intervals</li>
+                        <li>Rolling window aggregates</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Monetary Features</div>
+                    <ul class="tech-list">
+                        <li>Cumulative quantities</li>
+                        <li>Rolling averages & std</li>
+                        <li>Discount patterns</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Temporal Features</div>
+                    <ul class="tech-list">
+                        <li>Seasonality patterns</li>
+                        <li>Cyclical encodings</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Categorical Features</div>
+                    <ul class="tech-list">
+                        <li>Product popularity</li>
+                        <li>Category volumes</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Interaction Features</div>
+                    <ul class="tech-list">
+                        <li>Share of wallet</li>
+                        <li>Relative quantities</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Trend Features</div>
+                    <ul class="tech-list">
+                        <li>Growth momentum</li>
+                        <li>Purchase trends</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="arrow">↓</div>
+        
+        <!-- Layer 4: ML Models -->
+        <div class="layer">
+            <div class="layer-title">
+                <span class="layer-number">4</span>
+                Machine Learning Layer
+            </div>
+            <p style="color: #94a8c4; margin-bottom: 15px;">
+                Ensemble of three model architectures for optimal predictions
+            </p>
+            <div class="components">
+                <div class="component">
+                    <div class="component-title">Feed-Forward Neural Network</div>
+                    <div class="component-desc">
+                        Deep architecture: 256 → 128 → 64 → 32
+                    </div>
+                    <ul class="tech-list">
+                        <li>Batch normalization</li>
+                        <li>Dropout regularization</li>
+                        <li>Adam optimizer</li>
+                        <li>Early stopping</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">LSTM (Sequence Model)</div>
+                    <div class="component-desc">
+                        Bidirectional: 128 → 64 → 32
+                    </div>
+                    <ul class="tech-list">
+                        <li>Temporal patterns</li>
+                        <li>10-step sequences</li>
+                        <li>Bidirectional layers</li>
+                        <li>Dropout 0.3</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">LightGBM</div>
+                    <div class="component-desc">
+                        Gradient boosting decision trees
+                    </div>
+                    <ul class="tech-list">
+                        <li>31 leaves per tree</li>
+                        <li>Early stopping</li>
+                        <li>Feature importance</li>
+                        <li>Fast training</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Ensemble Predictor</div>
+                    <div class="component-desc">
+                        Weighted average combination
+                    </div>
+                    <ul class="tech-list">
+                        <li>FFNN: 33%</li>
+                        <li>LSTM: 33%</li>
+                        <li>LightGBM: 34%</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <div class="arrow">↓</div>
+        
+        <!-- Layer 5: Output -->
+        <div class="layer">
+            <div class="layer-title">
+                <span class="layer-number">5</span>
+                Prediction Output Layer
+            </div>
+            <p style="color: #94a8c4; margin-bottom: 15px;">
+                Two prediction components with priority scoring
+            </p>
+            <div class="components">
+                <div class="component">
+                    <div class="component-title">Component 1: Reorder Likelihood</div>
+                    <div class="component-desc">
+                        Probability that customer will reorder within N days
+                    </div>
+                    <ul class="tech-list">
+                        <li>Classification task</li>
+                        <li>ROC AUC metric</li>
+                        <li>Probability output [0-1]</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Component 2: Quantity Prediction</div>
+                    <div class="component-desc">
+                        Expected quantity of next order
+                    </div>
+                    <ul class="tech-list">
+                        <li>Regression task</li>
+                        <li>MAE metric</li>
+                        <li>Positive quantity output</li>
+                    </ul>
+                </div>
+                <div class="component">
+                    <div class="component-title">Priority Scoring</div>
+                    <div class="component-desc">
+                        Combined score for ranking opportunities
+                    </div>
+                    <ul class="tech-list">
+                        <li>60% probability weight</li>
+                        <li>40% quantity weight</li>
+                        <li>Normalized [0-100]</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Statistics -->
+        <div class="stats">
+            <div class="stat-card">
+                <span class="stat-number">50+</span>
+                <span class="stat-label">Engineered Features</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-number">3</span>
+                <span class="stat-label">Model Architectures</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-number">15</span>
+                <span class="stat-label">API Endpoints</span>
+            </div>
+<!--            <div class="stat-card">-->
+<!--                <span class="stat-number">&lt;100ms</span>-->
+<!--                <span class="stat-label">Inference Time</span>-->
+<!--            </div>-->
+        </div>
+        
+        <!-- Data Flow -->
+        <div class="flow-diagram">
+            <h2 style="color: #00d9ff; margin-bottom: 20px;">Data Flow</h2>
+            
+            <div class="flow-step">
+                <div class="flow-icon">1</div>
+                <div class="flow-content">
+                    <h3>CSV Upload</h3>
+                    <p>User uploads sales data through web interface → FastAPI validates and stores</p>
+                </div>
+            </div>
+            
+            <div class="flow-step">
+                <div class="flow-icon">2</div>
+                <div class="flow-content">
+                    <h3>Feature Engineering</h3>
+                    <p>Raw data transformed into 50+ features across 7 categories</p>
+                </div>
+            </div>
+            
+            <div class="flow-step">
+                <div class="flow-icon">3</div>
+                <div class="flow-content">
+                    <h3>Model Training</h3>
+                    <p>FFNN, LSTM, and LightGBM trained in parallel (10-25 minutes)</p>
+                </div>
+            </div>
+            
+            <div class="flow-step">
+                <div class="flow-icon">4</div>
+                <div class="flow-content">
+                    <h3>Inference</h3>
+                    <p>User queries → Features extracted → Models predict → Ensemble combines → Results returned</p>
+                </div>
+            </div>
+            
+            <div class="flow-step">
+                <div class="flow-icon">5</div>
+                <div class="flow-content">
+                    <h3>Visualization</h3>
+                    <p>Results displayed with interactive charts, priority scores, and model comparisons</p>
+                </div>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 50px; color: #94a8c4; font-size: 0.9rem;">
+            <p>Advanced AI-Powered Reorder Prediction System v2.0</p>
+            <p style="margin-top: 10px;">Built with TensorFlow, LightGBM, FastAPI, and modern web technologies</p>
+        </div>
+    </div>
+</body>
+</html>
