@@ -49,6 +49,8 @@ class ReorderApp {
         // Training
         document.getElementById('trainBtn').addEventListener('click', () => this.trainModels());
 
+        document.getElementById('viewMetricsBtn').addEventListener('click', () => this.modelMetrics());
+
         // Tabs
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
@@ -84,6 +86,8 @@ class ReorderApp {
         document.getElementById('compareCustomerSearch').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') document.getElementById('compareBtn').click();
         });
+
+        document.getElementById('generateForecastBtn').addEventListener('click', () => this.generateStockPlan());
     }
 
     switchTab(tabName) {
@@ -225,6 +229,23 @@ class ReorderApp {
         }
     }
 
+    async modelMetrics() {
+        try {
+            const response = await fetch(`${API_BASE}/model_metrics`);
+            if (!response.ok) throw new Error("No metrics found. Train models first.");
+            const data = await response.json();
+
+            // Use your existing function to show them
+            this.displayMetrics({
+                reorder_likelihood_metrics: data.reorder_likelihood,
+                quantity_prediction_metrics: data.quantity_prediction
+            });
+            this.showNotification("Metrics loaded", "success");
+        } catch (e) {
+            this.showNotification(e.message, "error");
+        }
+    }
+
     async predictForCustomer(customerId, model = 'ensemble') {
         // 1. Validation First
         if (!customerId) {
@@ -335,6 +356,66 @@ class ReorderApp {
         }
     }
 
+    async generateStockPlan() {
+        const fabric = document.getElementById('fabricSearch').value;
+
+        this.updateStatus('Forecasting...', 'loading');
+
+        try {
+            let url = `${API_BASE}/predict/stock_forecast?min_probability=0.5`;
+            if (fabric) url += `&fabric_filter=${fabric}`;
+
+            const response = await fetch(url);
+
+            // --- FIX: Check for Server Errors ---
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Forecast request failed');
+            }
+            // ------------------------------------
+
+            const data = await response.json();
+
+            // --- FIX: Check for Data Existence ---
+            if (!data.forecast) {
+                throw new Error("Invalid data received from server");
+            }
+            // -------------------------------------
+
+            const tbody = document.getElementById('stockTableBody');
+            tbody.innerHTML = '';
+
+            if (data.forecast.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No forecasts found matching criteria.</td></tr>';
+            } else {
+                data.forecast.forEach(row => {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+                    tr.innerHTML = `
+                        <td style="padding:15px 10px;">
+                            <div style="font-weight:bold; color:#e8f1ff;">${row['Product Name']}</div>
+                            <div style="font-size:0.8em; color:#5c7295;">${row['Product Code']}</div>
+                        </td>
+                        <td style="color:#94a8c4;">${row['Manufacturer']}</td>
+                        <td style="color:#94a8c4;">${row['Customer_Count']}</td>
+                        <td style="font-size:1.2em; font-weight:bold; color:#00ff88;">
+                            ${Math.round(row['Total_Qty']).toLocaleString()}
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+
+            document.getElementById('stockResults').classList.remove('hidden');
+            this.updateStatus('Ready', 'success');
+
+        } catch (e) {
+            console.error(e);
+            alert(`Error: ${e.message}`);
+            this.updateStatus('Error', 'error');
+        }
+    }
+
     // ===== Display Functions =====
 
     displayDataSummary(data) {
@@ -360,27 +441,49 @@ class ReorderApp {
 
         metricsGrid.innerHTML = '';
 
-        // Reorder Likelihood Metrics
+        // Helper to generate a multi-line metric card
+        const createCard = (title, metricsObj, type) => {
+            let content = '';
+
+            if (type === 'classification') {
+                // Reorder Likelihood Metrics (Percentages)
+                if (metricsObj.roc_auc !== undefined) content += `<div style="display:flex; justify-content:space-between;"><span>AUC:</span> <span style="color:var(--color-accent);">${(metricsObj.roc_auc * 100).toFixed(1)}%</span></div>`;
+                if (metricsObj.f1 !== undefined)      content += `<div style="display:flex; justify-content:space-between;"><span>F1:</span> <span style="color:var(--color-accent);">${(metricsObj.f1 * 100).toFixed(1)}%</span></div>`;
+                if (metricsObj.precision !== undefined) content += `<div style="display:flex; justify-content:space-between;"><span>Prec:</span> <span style="color:var(--color-accent);">${(metricsObj.precision * 100).toFixed(1)}%</span></div>`;
+            } else {
+                // Quantity Metrics (Raw Numbers)
+                if (metricsObj.mae !== undefined)  content += `<div style="display:flex; justify-content:space-between;"><span>MAE:</span> <span style="color:var(--color-accent);">${metricsObj.mae.toFixed(2)}</span></div>`;
+                if (metricsObj.rmse !== undefined) content += `<div style="display:flex; justify-content:space-between;"><span>RMSE:</span> <span style="color:var(--color-accent);">${metricsObj.rmse.toFixed(2)}</span></div>`;
+                if (metricsObj.r2 !== undefined)   content += `<div style="display:flex; justify-content:space-between;"><span>R²:</span> <span style="color:var(--color-accent);">${metricsObj.r2.toFixed(3)}</span></div>`;
+            }
+
+            return `
+                <div class="metric-card">
+                    <div class="metric-name" style="margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom:5px;">${title}</div>
+                    <div class="metric-value" style="font-size: 0.9rem; font-family: var(--font-mono); font-weight: normal; display: flex; flex-direction: column; gap: 5px;">
+                        ${content}
+                    </div>
+                </div>
+            `;
+        };
+
+        // 1. Reorder Likelihood Metrics
         const reorderMetrics = data.reorder_likelihood_metrics;
-        for (const [modelName, metrics] of Object.entries(reorderMetrics)) {
-            if (typeof metrics === 'object' && metrics.roc_auc) {
-                metricsGrid.innerHTML += this.createMetricCard(
-                    `${modelName.toUpperCase()} - Reorder`,
-                    'ROC AUC',
-                    (metrics.roc_auc * 100).toFixed(2) + '%'
-                );
+        if (reorderMetrics) {
+            for (const [modelName, metrics] of Object.entries(reorderMetrics)) {
+                if (typeof metrics === 'object') {
+                    metricsGrid.innerHTML += createCard(`${modelName.toUpperCase()} - Reorder`, metrics, 'classification');
+                }
             }
         }
 
-        // Quantity Prediction Metrics
+        // 2. Quantity Prediction Metrics
         const quantityMetrics = data.quantity_prediction_metrics;
-        for (const [modelName, metrics] of Object.entries(quantityMetrics)) {
-            if (typeof metrics === 'object' && metrics.mae) {
-                metricsGrid.innerHTML += this.createMetricCard(
-                    `${modelName.toUpperCase()} - Quantity`,
-                    'MAE',
-                    metrics.mae.toFixed(2)
-                );
+        if (quantityMetrics) {
+            for (const [modelName, metrics] of Object.entries(quantityMetrics)) {
+                if (typeof metrics === 'object') {
+                    metricsGrid.innerHTML += createCard(`${modelName.toUpperCase()} - Quantity`, metrics, 'regression');
+                }
             }
         }
 
@@ -428,7 +531,7 @@ class ReorderApp {
         resultsGrid.innerHTML = '';
 
         data.predictions.forEach((pred, index) => {
-            // ... (Rest of your existing card creation code) ...
+            // ... (card creation code) ...
             const card = document.createElement('div');
             card.className = 'result-card';
             card.style.animationDelay = `${index * 0.05}s`;
@@ -436,10 +539,15 @@ class ReorderApp {
             const probabilityPercent = (pred.reorder_probability * 100).toFixed(1);
             const scorePercent = (pred.priority_score * 100).toFixed(0);
 
+            const isDiscountShopper = pred.avg_discount >= 0.01; // > 1% average discount
+            const discountBadge = isDiscountShopper
+                ? `<span style="background:#ff4757; color:white; padding:2px 6px; border-radius:4px; font-size:0.7em;">High Discount Shopper (${(pred.avg_discount*100).toFixed(0)}%)</span>`
+                : '';
+
             card.innerHTML = `
                 <div class="result-info">
                     <div class="result-id">${pred.product_id}</div>
-                    <h4>${pred['Product Name'] || 'Unknown Product'}</h4>
+                    <h4>${pred['Product Name'] || 'Unknown Product'} ${discountBadge}</h4>
                     <div class="result-meta">
                         <span>${pred['Product Manufacturer'] || ''}</span>
                         <span>•</span>
@@ -503,10 +611,17 @@ class ReorderApp {
             const probabilityPercent = (pred.reorder_probability * 100).toFixed(1);
             const scorePercent = (pred.priority_score * 100).toFixed(0);
 
+            // Change logic: Only show if they actually get a discount (e.g., > 1%)
+            const isDiscountShopper = pred.avg_discount > 0.01;
+
+            const discountBadge = isDiscountShopper
+                ? `<span style="background:#ff4757; color:white; padding:2px 6px; border-radius:4px; font-size:0.7em; margin-left: 8px;">Deal Hunter (${(pred.avg_discount*100).toFixed(0)}%)</span>`
+                : '';
+
             card.innerHTML = `
                 <div class="result-info">
                     <div class="result-id">${pred.customer_id}</div>
-                    <h4>${pred['Partner Customer Name'] || 'Unknown Customer'}</h4>
+                    <h4>${pred['Partner Customer Name'] || 'Unknown Customer'} ${discountBadge}</h4>
                     <div class="result-meta">
                         <span>${pred['Partner Customer District'] || 'Unknown District'}</span>
                         <span>•</span>
@@ -661,3 +776,4 @@ class ReorderApp {
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ReorderApp();
 });
+

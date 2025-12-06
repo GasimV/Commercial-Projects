@@ -508,6 +508,116 @@ async def compare_models(request: CompareRequest):
         raise HTTPException(500, f"Comparison failed: {str(e)}")
 
 
+@app.get("/predict/stock_forecast")
+async def get_stock_forecast(
+    min_probability: float = Query(0.5, description="Only count orders with prob > X"),
+    fabric_filter: Optional[str] = Query(None, description="Filter by Manufacturer/Fabric")
+):
+    global current_data, predictor
+    if current_data is None or predictor is None:
+        raise HTTPException(400, "System not ready. Please upload data and train models.")
+
+    try:
+        from app.utils.feature_engineering import get_latest_features_for_inference
+
+        # 1. Get snapshot of ALL customers
+        latest = get_latest_features_for_inference(current_data)
+
+        if len(latest) == 0:
+            return {"count": 0, "forecast": []}
+
+        # --- FIX: ROBUST MERGE START ---
+        # 1. Strip whitespace from column names to prevent KeyErrors
+        # e.g., "Product Name " -> "Product Name"
+        current_data.columns = current_data.columns.str.strip()
+
+        # 2. Define required columns
+        meta_cols = ['Product Code', 'Product Name', 'Product Manufacturer']
+
+        # 3. Create metadata dataframe safely
+        # Check which columns actually exist in raw data
+        available_cols = [c for c in meta_cols if c in current_data.columns]
+
+        product_meta = current_data[available_cols].drop_duplicates('Product Code')
+
+        # 4. Convert IDs to string for reliable merging
+        if 'Product Code' in product_meta.columns:
+            product_meta['Product Code'] = product_meta['Product Code'].astype(str)
+        latest['product_id'] = latest['product_id'].astype(str)
+
+        # 5. Clean 'latest' before merge
+        # Remove any metadata columns if they somehow exist to avoid conflicts
+        latest = latest.drop(columns=[c for c in available_cols if c in latest.columns], errors='ignore')
+
+        # 6. Merge
+        if 'Product Code' in product_meta.columns:
+            latest = latest.merge(
+                product_meta,
+                left_on='product_id',
+                right_on='Product Code',
+                how='left'
+            )
+
+        # 7. Fill Missing/Non-existent columns with Defaults
+        if 'Product Manufacturer' not in latest.columns:
+            latest['Product Manufacturer'] = 'Unknown'
+        else:
+            latest['Product Manufacturer'] = latest['Product Manufacturer'].fillna('Unknown')
+
+        if 'Product Name' not in latest.columns:
+            latest['Product Name'] = 'Unknown Product'
+        else:
+            latest['Product Name'] = latest['Product Name'].fillna('Unknown Product')
+        # --- FIX END ---
+
+        # 2. Filter by Fabric/Manufacturer if requested
+        if fabric_filter:
+            mask = latest['Product Manufacturer'].astype(str).str.lower().str.contains(fabric_filter.lower())
+            latest = latest[mask]
+
+        if len(latest) == 0:
+            return {"count": 0, "forecast": []}
+
+        # 3. Predict
+        feature_cols = predictor.engineer.get_feature_columns()['all']
+        X = latest[feature_cols].fillna(0).values
+
+        probs = predictor.predict_reorder_likelihood(X, 'lgbm')
+        qtys = predictor.predict_quantity(X, 'lgbm')
+
+        # 4. Create DataFrame
+        forecast_df = pd.DataFrame({
+            'Product Code': latest['product_id'],
+            'Product Name': latest['Product Name'],
+            'Manufacturer': latest['Product Manufacturer'],
+            'Probability': probs,
+            'Expected_Qty': qtys
+        })
+
+        # 5. Filter & Aggregate
+        likely_orders = forecast_df[forecast_df['Probability'] >= min_probability]
+
+        stock_plan = likely_orders.groupby(['Product Code', 'Product Name', 'Manufacturer']).agg(
+            Total_Qty=('Expected_Qty', 'sum'),
+            Customer_Count=('Product Code', 'count'),
+            Avg_Confidence=('Probability', 'mean')
+        ).reset_index()
+
+        # 6. Sort
+        stock_plan = stock_plan.sort_values('Total_Qty', ascending=False).head(50)
+
+        return {
+            "count": len(stock_plan),
+            "forecast": stock_plan.to_dict(orient='records')
+        }
+
+    except Exception as e:
+        print(f"Stock Forecast Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Forecast failed: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
 

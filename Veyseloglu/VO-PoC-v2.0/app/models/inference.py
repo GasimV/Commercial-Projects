@@ -231,6 +231,7 @@ class ReorderPredictor:
             'reorder_probability': reorder_probs,
             'predicted_quantity': np.maximum(0, np.round(quantities)).astype(int),
             'days_since_last_order': latest['days_since_last_order'].values,
+            'avg_discount': latest.get('avg_discount', [0]*len(latest)).values
         })
 
         # 4. MERGE NAMES
@@ -280,6 +281,7 @@ class ReorderPredictor:
             'reorder_probability': reorder_probs,
             'predicted_quantity': np.maximum(0, np.round(quantities)).astype(int),
             'days_since_last_order': latest['days_since_last_order'].values,
+            'avg_discount': latest.get('avg_discount', [0]*len(latest)).values
         })
 
         # 2. MERGE DETAILS

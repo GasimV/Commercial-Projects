@@ -144,6 +144,10 @@
                     Train All Models
                 </button>
 
+                <button id="viewMetricsBtn" class="btn btn-secondary" style="margin-left: 10px;">
+                    View Current Metrics
+                </button>
+
                 <div class="training-progress hidden" id="trainingProgress">
                     <div class="progress-bar">
                         <div class="progress-fill" id="progressFill"></div>
@@ -178,6 +182,7 @@
                     <button class="tab active" data-tab="customer">By Customer</button>
                     <button class="tab" data-tab="product">By Product</button>
                     <button class="tab" data-tab="compare">Compare Models</button>
+                    <button class="tab" data-tab="stock">Stock Forecast</button>
                 </div>
 
                 <!-- Customer Tab -->
@@ -246,6 +251,36 @@
                         <div class="results-grid" id="productResultsGrid">
                             <!-- Dynamically populated -->
                         </div>
+                    </div>
+                </div>
+
+                <!-- Stock Tab -->
+                <div class="tab-content" data-content="stock">
+                    <div class="search-section">
+                        <div class="search-box">
+                             <!-- This serves as your "By Fabric" search -->
+                            <input type="text" id="fabricSearch" class="input" placeholder="Filter by Manufacturer/Fabric (Optional)...">
+                        </div>
+                        <button id="generateForecastBtn" class="btn btn-primary">
+                            Generate Plan
+                        </button>
+                    </div>
+
+                    <!-- Table for Stock Planner -->
+                    <div class="results-container hidden" id="stockResults">
+                        <table class="data-table" style="width:100%; text-align:left; border-collapse:collapse;">
+                            <thead>
+                                <tr style="border-bottom:1px solid #333; color:#888;">
+                                    <th style="padding:10px;">Product</th>
+                                    <th>Manufacturer</th>
+                                    <th>Cust. Count</th>
+                                    <th>Total Qty Needed</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stockTableBody">
+                                <!-- Rows go here -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
 
