@@ -54,7 +54,7 @@ class FeatureEngineer:
         # Rename columns for easier handling
         column_mapping = {
             'DATE': 'date',
-            'Partner Customer Code': 'customer_id',
+            'Partner Customer Referans Code': 'customer_id',
             'Product Code': 'product_id',
             'NetSalesQty': 'quantity',
             'Net Sales Value LC': 'sales_value',
@@ -283,30 +283,35 @@ class FeatureEngineer:
         return df
 
     def create_target_variable(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Create target variables for both classification and regression
-        """
         df = df.sort_values(['customer_id', 'product_id', 'date'])
 
-        # For reorder likelihood: will they order within N days?
         df['next_order_date'] = df.groupby(['customer_id', 'product_id'])['date'].shift(-1)
         df['days_to_next_order'] = (df['next_order_date'] - df['date']).dt.days
 
-        # Binary target: reorder within prediction horizon
+        # Default: will_reorder based on next order timing (works when next_order_date exists)
         df['will_reorder'] = (df['days_to_next_order'] <= self.prediction_horizon).astype(int)
 
-        # For quantity prediction: next order quantity ONLY if within horizon
-        # This ensures quantity model predicts "quantity within N days" not "quantity whenever"
         df['next_order_quantity'] = df.groupby(['customer_id', 'product_id'])['quantity'].shift(-1)
-
-        # Set quantity to NaN if next order is beyond the prediction horizon
-        # This aligns the quantity target with the same time window as will_reorder
         df.loc[df['days_to_next_order'] > self.prediction_horizon, 'next_order_quantity'] = np.nan
 
-        # Only keep records where we can make predictions (not the last order)
-        df_with_target = df[df['next_order_date'].notna()].copy()
+        # ---- FIX: right-censoring instead of dropping all last orders ----
+        dataset_end = df['date'].max()
+        df['days_until_dataset_end'] = (dataset_end - df['date']).dt.days
 
+        missing_next = df['next_order_date'].isna()
+
+        # If there is no next order, but we observed at least horizon days after this row,
+        # then it's a true negative (no reorder within horizon).
+        df.loc[missing_next & (df['days_until_dataset_end'] >= self.prediction_horizon), 'will_reorder'] = 0
+        df.loc[missing_next & (df['days_until_dataset_end'] >= self.prediction_horizon), 'next_order_quantity'] = np.nan
+
+        # If there is no next order AND we did NOT observe a full horizon after this row,
+        # the label is censored/unknown -> drop.
+        censored = missing_next & (df['days_until_dataset_end'] < self.prediction_horizon)
+
+        df_with_target = df.loc[~censored].copy()
         return df_with_target
+
 
     def get_feature_columns(self) -> Dict[str, List[str]]:
         """
@@ -338,24 +343,23 @@ class FeatureEngineer:
             'month_sin', 'month_cos', 'dow_sin', 'dow_cos'
         ]
 
-        categorical_features = [
-            'customer_total_products', 'customer_total_orders',
-            'product_total_customers', 'product_popularity',
-            'category_h1_volume', 'manufacturer_volume',
-            'settlement_customer_count', 'district_order_count'
-        ]
+        # categorical_features = [
+        #     'customer_total_products', 'customer_total_orders',
+        #     'product_total_customers', 'product_popularity',
+        #     'category_h1_volume', 'manufacturer_volume',
+        #     'settlement_customer_count', 'district_order_count'
+        # ]
 
-        interaction_features = [
-            'share_of_wallet', 'customer_product_concentration', 'relative_quantity'
-        ]
+        # interaction_features = [
+        #     'share_of_wallet', 'customer_product_concentration', 'relative_quantity'
+        # ]
 
         trend_features = [
             'qty_trend', 'momentum'
         ]
 
         all_features = (recency_features + frequency_features + monetary_features +
-                        temporal_features + categorical_features + interaction_features +
-                        trend_features)
+                        temporal_features + trend_features) # categorical_features + interaction_features +
 
         return {
             'all': all_features,
@@ -363,8 +367,8 @@ class FeatureEngineer:
             'frequency': frequency_features,
             'monetary': monetary_features,
             'temporal': temporal_features,
-            'categorical': categorical_features,
-            'interaction': interaction_features,
+            #'categorical': categorical_features,
+            #'interaction': interaction_features,
             'trend': trend_features
         }
 
@@ -387,11 +391,11 @@ class FeatureEngineer:
         print("Creating temporal features...")
         df = self.create_temporal_features(df)
 
-        print("Creating categorical features...")
-        df = self.create_categorical_features(df)
+        # print("Creating categorical features...")
+        # df = self.create_categorical_features(df)
 
-        print("Creating interaction features...")
-        df = self.create_customer_product_interaction(df)
+        # print("Creating interaction features...")
+        # df = self.create_customer_product_interaction(df)
 
         print("Creating trend features...")
         df = self.create_trend_features(df)

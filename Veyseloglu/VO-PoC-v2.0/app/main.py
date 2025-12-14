@@ -117,7 +117,7 @@ async def upload_data(file: UploadFile = File(...)):
             )
 
         # Validate required columns
-        required_cols = ['DATE', 'Partner Customer Code', 'Product Code', 'NetSalesQty']
+        required_cols = ['DATE', 'Partner Customer Referans Code', 'Product Code', 'NetSalesQty']
         missing = [col for col in required_cols if col not in df.columns]
 
         if missing:
@@ -137,7 +137,7 @@ async def upload_data(file: UploadFile = File(...)):
                 "start": str(pd.to_datetime(df['DATE']).min()),
                 "end": str(pd.to_datetime(df['DATE']).max())
             },
-            "unique_customers": int(df['Partner Customer Code'].nunique()),
+            "unique_customers": int(df['Partner Customer Referans Code'].nunique()),
             "unique_products": int(df['Product Code'].nunique())
         }
 
@@ -166,8 +166,8 @@ async def data_summary():
             "days": int((df['DATE'].max() - df['DATE'].min()).days)
         },
         "customers": {
-            "total": int(df['Partner Customer Code'].nunique()),
-            "top_10": df['Partner Customer Code'].value_counts().head(10).to_dict()
+            "total": int(df['Partner Customer Referans Code'].nunique()),
+            "top_10": df['Partner Customer Referans Code'].value_counts().head(10).to_dict()
         },
         "products": {
             "total": int(df['Product Code'].nunique()),
@@ -184,7 +184,7 @@ async def data_summary():
 @app.post("/train")
 async def train_models(request: TrainRequest):
     """
-    Train all models (FFNN, LSTM, LightGBM)
+    Train all models (FFNN, LightGBM)
     """
     global current_data, predictor
 
@@ -347,10 +347,10 @@ async def get_customers(limit: int = Query(100, description="Number of customers
     if current_data is None:
         raise HTTPException(400, "No data loaded")
 
-    customers = current_data['Partner Customer Code'].value_counts().head(limit)
+    customers = current_data['Partner Customer Referans Code'].value_counts().head(limit)
 
     return {
-        "total_customers": int(current_data['Partner Customer Code'].nunique()),
+        "total_customers": int(current_data['Partner Customer Referans Code'].nunique()),
         "customers": [
             {
                 "customer_id": str(cust_id),

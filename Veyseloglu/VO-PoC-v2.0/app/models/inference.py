@@ -38,16 +38,14 @@ class ReorderPredictor:
         # Reorder likelihood models
         self.reorder_models = {
             'ffnn': None,
-            'lgbm': None,
-            'lstm': None
+            'lgbm': None
         }
         self.reorder_scalers = {}
 
         # Quantity models
         self.quantity_models = {
             'ffnn': None,
-            'lgbm': None,
-            'lstm': None
+            'lgbm': None
         }
         self.quantity_scalers = {}
 
@@ -74,15 +72,6 @@ class ReorderPredictor:
         except Exception as e:
             print(f"✗ LightGBM failed: {e}")
 
-        # Load LSTM
-        try:
-            lstm_path = os.path.join(self.model_dir, 'reorder_likelihood_lstm')
-            self.reorder_models['lstm'] = keras.models.load_model(f"{lstm_path}_model.h5")
-            self.reorder_scalers['lstm'] = joblib.load(f"{lstm_path}_scaler.pkl")
-            print("✓ LSTM loaded")
-        except Exception as e:
-            print(f"✗ LSTM failed: {e}")
-
     def load_quantity_models(self):
         """Load quantity prediction models"""
         print("Loading quantity prediction models...")
@@ -106,15 +95,6 @@ class ReorderPredictor:
         except Exception as e:
             print(f"✗ LightGBM failed: {e}")
 
-        # Load LSTM
-        try:
-            lstm_path = os.path.join(self.model_dir, 'quantity_prediction_lstm')
-            self.quantity_models['lstm'] = keras.models.load_model(f"{lstm_path}_model.h5")
-            self.quantity_scalers['lstm'] = joblib.load(f"{lstm_path}_scaler.pkl")
-            print("✓ LSTM loaded")
-        except Exception as e:
-            print(f"✗ LSTM failed: {e}")
-
     def predict_reorder_likelihood(self, X: np.ndarray,
                                    model_name: str = 'ensemble') -> np.ndarray:
         """
@@ -122,17 +102,10 @@ class ReorderPredictor:
 
         Args:
             X: Feature matrix (tabular features)
-            model_name: 'ffnn', 'lgbm', 'lstm', or 'ensemble'
+            model_name: 'ffnn', 'lgbm', or 'ensemble'
 
         Returns:
             Probability array
-
-        Note:
-            LSTM is NOT included in 'ensemble' mode for tabular inference because:
-            - LSTM requires sequence data (10 time steps per prediction)
-            - Tabular inference uses only the latest features
-            - Building sequences at inference time would require keeping full history
-            For LSTM predictions, use model_name='lstm' with prepared sequences
         """
         if model_name == 'ensemble':
             predictions = []
@@ -151,9 +124,6 @@ class ReorderPredictor:
                 pred = self.reorder_models['lgbm'].predict(X_scaled)
                 predictions.append(pred)
                 weights.append(0.5)  # 50% weight
-
-            # LSTM intentionally excluded from ensemble in tabular inference
-            # (see docstring above for explanation)
 
             # Weighted average
             if len(predictions) == 0:
@@ -182,14 +152,10 @@ class ReorderPredictor:
 
         Args:
             X: Feature matrix (tabular features)
-            model_name: 'ffnn', 'lgbm', 'lstm', or 'ensemble'
+            model_name: 'ffnn', 'lgbm', or 'ensemble'
 
         Returns:
             Quantity predictions
-
-        Note:
-            - Ensemble uses only FFNN + LightGBM (LSTM excluded, see predict_reorder_likelihood)
-            - Predictions are for quantity within the trained prediction horizon
         """
         if model_name == 'ensemble':
             predictions = []
@@ -208,8 +174,6 @@ class ReorderPredictor:
                 pred = self.quantity_models['lgbm'].predict(X_scaled)
                 predictions.append(pred)
                 weights.append(0.5)
-
-            # LSTM intentionally excluded (same reason as reorder likelihood)
 
             # Weighted average
             if len(predictions) == 0:
@@ -340,8 +304,8 @@ class ReorderPredictor:
         quantities = self.predict_quantity(X, model_name)
 
         # 1. CREATE LOOKUP FOR CUSTOMER DETAILS (New Logic)
-        cust_lookup = df[['Partner Customer Code', 'Partner Customer Name', 'Salesman Name', 'Partner Customer District']].drop_duplicates('Partner Customer Code')
-        cust_lookup['Partner Customer Code'] = cust_lookup['Partner Customer Code'].astype(str)
+        cust_lookup = df[['Partner Customer Referans Code', 'Partner Customer Referans Name', 'Salesman Name', 'Partner Customer District']].drop_duplicates('Partner Customer Referans Code')
+        cust_lookup['Partner Customer Referans Code'] = cust_lookup['Partner Customer Referans Code'].astype(str)
         latest['customer_id'] = latest['customer_id'].astype(str)
 
         results = pd.DataFrame({
@@ -357,11 +321,11 @@ class ReorderPredictor:
         results = results.merge(
             cust_lookup,
             left_on='customer_id',
-            right_on='Partner Customer Code',
+            right_on='Partner Customer Referans Code',
             how='left'
         )
 
-        results['Partner Customer Name'] = results['Partner Customer Name'].fillna('Unknown Customer')
+        results['Partner Customer Referans Name'] = results['Partner Customer Referans Name'].fillna('Unknown Customer')
         results['Salesman Name'] = results['Salesman Name'].fillna('N/A')
 
         # PROBABILITY GATING (conditional quantity prediction)

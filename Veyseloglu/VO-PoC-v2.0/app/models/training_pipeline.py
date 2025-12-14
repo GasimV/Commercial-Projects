@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 
 from app.utils.feature_engineering import FeatureEngineer
 from app.models.model_architectures import (
-    FFNNModel, LSTMModel, LightGBMModel, EnsembleModel
+    FFNNModel, LightGBMModel, EnsembleModel
 )
 
 
@@ -82,7 +82,6 @@ class ReorderTrainingPipeline:
         self.engineer = FeatureEngineer(prediction_horizon=prediction_horizon)
         self.models = {
             'ffnn': None,
-            'lstm': None,
             'lgbm': None,
             'ensemble': None
         }
@@ -137,65 +136,11 @@ class ReorderTrainingPipeline:
         print(f"  Val:   {X_val.shape}, Positive rate: {y_val.mean():.4f}")
         print(f"  Test:  {X_test.shape}, Positive rate: {y_test.mean():.4f}")
 
-        # Prepare LSTM sequences (with caching)
-        seq_x_path = os.path.join(self.data_dir, 'processed', 'reorder_seq_X.npy')
-        seq_y_path = os.path.join(self.data_dir, 'processed', 'reorder_seq_y.npy')
-
-        if resume_training and os.path.exists(seq_x_path) and os.path.exists(seq_y_path):
-            print("\nResuming: Loading LSTM sequences from disk...")
-            # Allow object arrays in case sequence generation created ragged arrays
-            X_seq = np.load(seq_x_path, allow_pickle=True)
-            y_seq_like = np.load(seq_y_path, allow_pickle=True)
-        else:
-            print("\nPreparing LSTM sequences...")
-            X_seq, y_seq_like, _ = self.engineer.prepare_sequences_for_lstm(
-                df_features, sequence_length=10
-            )
-            print("Saving LSTM sequences to disk...")
-            np.save(seq_x_path, X_seq)
-            np.save(seq_y_path, y_seq_like)
-
-        if len(X_seq) > 0:
-            # For LSTM, we use the same time-based indices from the tabular split
-            # This ensures LSTM sees the same temporal split as FFNN/LightGBM
-            train_indices = train_df.index
-            val_indices = val_df.index
-            test_indices = test_df.index
-
-            # Map sequence indices to split (sequences are already time-ordered)
-            # Note: This is a simplification - for production you may want more sophisticated mapping
-            n_seq = len(X_seq)
-            seq_test_start = int(n_seq * (1 - test_size))
-            seq_val_start = int(seq_test_start * 0.8)
-
-            X_seq_train = X_seq[:seq_val_start]
-            y_seq_train = y_seq_like[:seq_val_start]
-
-            X_seq_val = X_seq[seq_val_start:seq_test_start]
-            y_seq_val = y_seq_like[seq_val_start:seq_test_start]
-
-            X_seq_test = X_seq[seq_test_start:]
-            y_seq_test = y_seq_like[seq_test_start:]
-
-            print(f"\nLSTM Sequences:")
-            print(f"  Train: {X_seq_train.shape}")
-            print(f"  Val:   {X_seq_val.shape}")
-            print(f"  Test:  {X_seq_test.shape}")
-        else:
-            X_seq_train = X_seq_val = X_seq_test = None
-            y_seq_train = y_seq_val = y_seq_test = None
-            print("\nNot enough data for LSTM sequences")
-
         return {
             'tabular': {
                 'X_train': X_train, 'y_train': y_train,
                 'X_val': X_val, 'y_val': y_val,
                 'X_test': X_test, 'y_test': y_test
-            },
-            'sequences': {
-                'X_train': X_seq_train, 'y_train': y_seq_train,
-                'X_val': X_seq_val, 'y_val': y_seq_val,
-                'X_test': X_seq_test, 'y_test': y_seq_test
             },
             'feature_cols': feature_cols
         }
@@ -245,58 +190,6 @@ class ReorderTrainingPipeline:
         self.metrics['ffnn'] = test_metrics
         return test_metrics
 
-    def train_lstm(self, data: Dict, resume_training: bool = False) -> Dict:
-        """Train LSTM model"""
-        seq = data['sequences']
-        if seq['X_train'] is None:
-            return {}
-
-        model_path = os.path.join(self.model_dir, 'reorder_likelihood_lstm')
-        full_path = f"{model_path}_model.h5"
-
-        self.models['lstm'] = LSTMModel(
-            input_shape=(seq['X_train'].shape[1], seq['X_train'].shape[2]),
-            task='classification'
-        )
-
-        if resume_training and os.path.exists(full_path):
-            print(f"\n[RESUME] Found existing LSTM model at {full_path}. Loading...")
-            try:
-                self.models['lstm'].load(model_path)
-
-                n_samples, seq_len, n_features = seq['X_test'].shape
-                X_test_reshaped = seq['X_test'].reshape(-1, n_features)
-                X_test_scaled = self.models['lstm'].scaler.transform(X_test_reshaped)
-                X_test_scaled = X_test_scaled.reshape(n_samples, seq_len, n_features)
-
-                test_metrics = self.models['lstm'].evaluate(X_test_scaled, seq['y_test'])
-                print("✓ LSTM Loaded. Metrics:", test_metrics)
-                self.metrics['lstm'] = test_metrics
-                return test_metrics
-            except Exception as e:
-                print(f"⚠ Failed to load model: {e}. Starting fresh training...")
-
-        print("\n" + "=" * 80)
-        print("TRAINING LSTM MODEL")
-        print("=" * 80)
-
-        metrics = self.models['lstm'].train(
-            seq['X_train'], seq['y_train'],
-            seq['X_val'], seq['y_val'],
-            epochs=100,
-            batch_size=128
-        )
-
-        n_samples, seq_len, n_features = seq['X_test'].shape
-        X_test_reshaped = seq['X_test'].reshape(-1, n_features)
-        X_test_scaled = self.models['lstm'].scaler.transform(X_test_reshaped)
-        X_test_scaled = X_test_scaled.reshape(n_samples, seq_len, n_features)
-
-        test_metrics = self.models['lstm'].evaluate(X_test_scaled, seq['y_test'])
-        self.models['lstm'].save(model_path)
-        self.metrics['lstm'] = test_metrics
-        return test_metrics
-
     def train_lgbm(self, data: Dict, resume_training: bool = False) -> Dict:
         """Train LightGBM model"""
         tab = data['tabular']
@@ -342,22 +235,18 @@ class ReorderTrainingPipeline:
         return test_metrics
 
     def create_ensemble(self, data: Dict) -> Dict:
-        """Create ensemble model (FFNN + LightGBM only for production inference)"""
+        """Create ensemble model (FFNN + LightGBM)"""
         print("\n" + "=" * 80)
         print("CREATING ENSEMBLE MODEL (FFNN + LightGBM)")
         print("=" * 80)
-        print("Note: LSTM trained but excluded from ensemble for tabular inference")
 
         tab = data['tabular']
-        seq = data['sequences']
 
-        # Ensemble uses FFNN + LightGBM only (50/50 weights)
-        # LSTM excluded because it requires sequences at inference time
+        # Ensemble uses FFNN + LightGBM (50/50 weights)
         self.models['ensemble'] = EnsembleModel(
-            weights={'ffnn': 0.5, 'lstm': 0.0, 'lgbm': 0.5}
+            weights={'ffnn': 0.5, 'lgbm': 0.5}
         )
         self.models['ensemble'].add_model('ffnn', self.models['ffnn'])
-        self.models['ensemble'].add_model('lstm', self.models['lstm'])
         self.models['ensemble'].add_model('lgbm', self.models['lgbm'])
 
         # Always use tabular-only prediction for ensemble
@@ -383,7 +272,6 @@ class ReorderTrainingPipeline:
         data = self.prepare_data(df, resume_training=resume_training)
 
         self.train_ffnn(data, resume_training=resume_training)
-        self.train_lstm(data, resume_training=resume_training)
         self.train_lgbm(data, resume_training=resume_training)
         self.create_ensemble(data)
 
@@ -408,7 +296,6 @@ class QuantityTrainingPipeline:
         self.engineer = FeatureEngineer(prediction_horizon=prediction_horizon)
         self.models = {
             'ffnn': None,
-            'lstm': None,
             'lgbm': None,
             'ensemble': None
         }
@@ -463,59 +350,11 @@ class QuantityTrainingPipeline:
         print(f"  Val:   {X_val.shape}, Mean qty: {y_val.mean():.2f}")
         print(f"  Test:  {X_test.shape}, Mean qty: {y_test.mean():.2f}")
 
-        seq_x_path = os.path.join(self.data_dir, 'processed', 'qty_seq_X.npy')
-        seq_y_path = os.path.join(self.data_dir, 'processed', 'qty_seq_y.npy')
-
-        if resume_training and os.path.exists(seq_x_path) and os.path.exists(seq_y_path):
-            print("\nResuming: Loading LSTM sequences from disk...")
-            X_seq = np.load(seq_x_path, allow_pickle=True)
-            y_seq_qty = np.load(seq_y_path, allow_pickle=True)
-        else:
-            print("\nPreparing LSTM sequences...")
-            X_seq, _, y_seq_qty = self.engineer.prepare_sequences_for_lstm(
-                df_features, sequence_length=10
-            )
-            valid_mask = ~np.isnan(y_seq_qty)
-            X_seq = X_seq[valid_mask]
-            y_seq_qty = y_seq_qty[valid_mask]
-            print("Saving LSTM sequences to disk...")
-            np.save(seq_x_path, X_seq)
-            np.save(seq_y_path, y_seq_qty)
-
-        if len(X_seq) > 0:
-            # Use time-based split for LSTM sequences (same as tabular)
-            n_seq = len(X_seq)
-            seq_test_start = int(n_seq * (1 - test_size))
-            seq_val_start = int(seq_test_start * 0.8)
-
-            X_seq_train = X_seq[:seq_val_start]
-            y_seq_train = y_seq_qty[:seq_val_start]
-
-            X_seq_val = X_seq[seq_val_start:seq_test_start]
-            y_seq_val = y_seq_qty[seq_val_start:seq_test_start]
-
-            X_seq_test = X_seq[seq_test_start:]
-            y_seq_test = y_seq_qty[seq_test_start:]
-
-            print(f"\nLSTM Sequences:")
-            print(f"  Train: {X_seq_train.shape}")
-            print(f"  Val:   {X_seq_val.shape}")
-            print(f"  Test:  {X_seq_test.shape}")
-        else:
-            X_seq_train = X_seq_val = X_seq_test = None
-            y_seq_train = y_seq_val = y_seq_test = None
-            print("\n⚠ Not enough data for LSTM sequences")
-
         return {
             'tabular': {
                 'X_train': X_train, 'y_train': y_train,
                 'X_val': X_val, 'y_val': y_val,
                 'X_test': X_test, 'y_test': y_test
-            },
-            'sequences': {
-                'X_train': X_seq_train, 'y_train': y_seq_train,
-                'X_val': X_seq_val, 'y_val': y_seq_val,
-                'X_test': X_seq_test, 'y_test': y_seq_test
             },
             'feature_cols': feature_cols
         }
@@ -562,56 +401,6 @@ class QuantityTrainingPipeline:
         )
         self.models['ffnn'].save(model_path)
         self.metrics['ffnn'] = test_metrics
-        return test_metrics
-
-    def train_lstm(self, data: Dict, resume_training: bool = False) -> Dict:
-        """Train LSTM model"""
-        seq = data['sequences']
-        if seq['X_train'] is None:
-            return {}
-
-        model_path = os.path.join(self.model_dir, 'quantity_prediction_lstm')
-        full_path = f"{model_path}_model.h5"
-
-        self.models['lstm'] = LSTMModel(
-            input_shape=(seq['X_train'].shape[1], seq['X_train'].shape[2]),
-            task='regression'
-        )
-
-        if resume_training and os.path.exists(full_path):
-            print(f"\n[RESUME] Found existing LSTM model at {full_path}. Loading...")
-            try:
-                self.models['lstm'].load(model_path)
-                n_samples, seq_len, n_features = seq['X_test'].shape
-                X_test_reshaped = seq['X_test'].reshape(-1, n_features)
-                X_test_scaled = self.models['lstm'].scaler.transform(X_test_reshaped)
-                X_test_scaled = X_test_scaled.reshape(n_samples, seq_len, n_features)
-                test_metrics = self.models['lstm'].evaluate(X_test_scaled, seq['y_test'])
-                print("✓ LSTM Loaded. Metrics:", test_metrics)
-                self.metrics['lstm'] = test_metrics
-                return test_metrics
-            except Exception as e:
-                print(f"⚠ Failed to load model: {e}. Starting fresh training...")
-
-        print("\n" + "=" * 80)
-        print("TRAINING LSTM MODEL")
-        print("=" * 80)
-
-        metrics = self.models['lstm'].train(
-            seq['X_train'], seq['y_train'],
-            seq['X_val'], seq['y_val'],
-            epochs=100,
-            batch_size=128
-        )
-
-        n_samples, seq_len, n_features = seq['X_test'].shape
-        X_test_reshaped = seq['X_test'].reshape(-1, n_features)
-        X_test_scaled = self.models['lstm'].scaler.transform(X_test_reshaped)
-        X_test_scaled = X_test_scaled.reshape(n_samples, seq_len, n_features)
-
-        test_metrics = self.models['lstm'].evaluate(X_test_scaled, seq['y_test'])
-        self.models['lstm'].save(model_path)
-        self.metrics['lstm'] = test_metrics
         return test_metrics
 
     def train_lgbm(self, data: Dict, resume_training: bool = False) -> Dict:
@@ -662,7 +451,6 @@ class QuantityTrainingPipeline:
         data = self.prepare_data(df, resume_training=resume_training)
 
         self.train_ffnn(data, resume_training=resume_training)
-        self.train_lstm(data, resume_training=resume_training)
         self.train_lgbm(data, resume_training=resume_training)
 
         with open(os.path.join(self.model_dir, 'quantity_prediction_metrics.json'), 'w') as f:

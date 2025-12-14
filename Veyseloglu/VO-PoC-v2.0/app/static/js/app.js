@@ -627,7 +627,7 @@ class ReorderApp {
             card.innerHTML = `
                 <div class="result-info">
                     <div class="result-id">${pred.customer_id}</div>
-                    <h4>${pred['Partner Customer Name'] || 'Unknown Customer'} ${discountBadge}</h4>
+                    <h4>${pred['Partner Referans Customer Name'] || 'Unknown Customer'} ${discountBadge}</h4>
                     <div class="result-meta">
                         <span>${pred['Partner Customer District'] || 'Unknown District'}</span>
                         <span>•</span>
@@ -782,4 +782,3 @@ class ReorderApp {
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ReorderApp();
 });
-

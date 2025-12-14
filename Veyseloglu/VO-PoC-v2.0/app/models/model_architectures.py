@@ -1,5 +1,5 @@
 """
-Model Architectures: FFNN, LSTM, and LightGBM
+Model Architectures: FFNN and LightGBM
 For reorder likelihood and quantity prediction
 """
 
@@ -169,164 +169,6 @@ class FFNNModel:
         self.scaler = joblib.load(f"{path}_scaler.pkl")
 
 
-class LSTMModel:
-    """
-    LSTM Neural Network for sequence-based prediction
-    """
-
-    def __init__(self, input_shape: Tuple[int, int], task: str = 'classification'):
-        self.input_shape = input_shape  # (sequence_length, n_features)
-        self.task = task
-        self.model = None
-        self.scaler = StandardScaler()
-        self.history = None
-
-    def build_model(self):
-        """Build LSTM architecture"""
-        inputs = layers.Input(shape=self.input_shape)
-
-        # Bidirectional LSTM layers
-        x = layers.Bidirectional(layers.LSTM(128, return_sequences=True))(inputs)
-        x = layers.Dropout(0.3)(x)
-
-        x = layers.Bidirectional(layers.LSTM(64, return_sequences=True))(x)
-        x = layers.Dropout(0.3)(x)
-
-        x = layers.Bidirectional(layers.LSTM(32, return_sequences=False))(x)
-        x = layers.Dropout(0.2)(x)
-
-        # Dense layers
-        x = layers.Dense(32, activation='relu')(x)
-        x = layers.Dropout(0.2)(x)
-
-        # Output layer
-        if self.task == 'classification':
-            outputs = layers.Dense(1, activation='sigmoid')(x)
-            loss = 'binary_crossentropy'
-            metrics = ['accuracy', tf.keras.metrics.AUC(name='auc')]
-        else:
-            outputs = layers.Dense(1, activation='relu')(x)
-            loss = 'huber'
-            metrics = ['mae', 'mse']
-
-        self.model = Model(inputs=inputs, outputs=outputs)
-        self.model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=0.001),
-            loss=loss,
-            metrics=metrics
-        )
-
-        return self.model
-
-    def prepare_sequences(self, X: np.ndarray) -> np.ndarray:
-        """Scale sequences properly"""
-        n_samples, seq_len, n_features = X.shape
-
-        # Reshape for scaling
-        X_reshaped = X.reshape(-1, n_features)
-        X_scaled = self.scaler.fit_transform(X_reshaped)
-
-        # Reshape back
-        return X_scaled.reshape(n_samples, seq_len, n_features)
-
-    def train(self, X_train: np.ndarray, y_train: np.ndarray,
-              X_val: np.ndarray, y_val: np.ndarray,
-              epochs: int = 100, batch_size: int = 128) -> Dict:
-        """Train the model"""
-
-        # Scale sequences
-        X_train_scaled = self.prepare_sequences(X_train)
-
-        # Scale validation using same scaler
-        n_samples, seq_len, n_features = X_val.shape
-        X_val_reshaped = X_val.reshape(-1, n_features)
-        X_val_scaled = self.scaler.transform(X_val_reshaped)
-        X_val_scaled = X_val_scaled.reshape(n_samples, seq_len, n_features)
-
-        # Build model
-        if self.model is None:
-            self.build_model()
-
-        # Callbacks
-        callbacks = [
-            EarlyStopping(
-                monitor='val_loss',
-                patience=20,
-                restore_best_weights=True,
-                verbose=1
-            ),
-            ReduceLROnPlateau(
-                monitor='val_loss',
-                factor=0.5,
-                patience=10,
-                min_lr=0.00001,
-                verbose=1
-            )
-        ]
-
-        # Train
-        self.history = self.model.fit(
-            X_train_scaled, y_train,
-            validation_data=(X_val_scaled, y_val),
-            epochs=epochs,
-            batch_size=batch_size,
-            callbacks=callbacks,
-            verbose=1
-        )
-
-        # Evaluate
-        metrics = self.evaluate(X_val_scaled, y_val)
-
-        return metrics
-
-    def evaluate(self, X: np.ndarray, y: np.ndarray) -> Dict:
-        """Evaluate model performance"""
-        y_pred = self.model.predict(X, verbose=0).flatten()
-
-        if self.task == 'classification':
-            y_pred_binary = (y_pred > 0.5).astype(int)
-            metrics = {
-                'roc_auc': float(roc_auc_score(y, y_pred)),
-                'f1': float(f1_score(y, y_pred_binary)),
-                'precision': float(precision_score(y, y_pred_binary)),
-                'recall': float(recall_score(y, y_pred_binary))
-            }
-        else:
-            metrics = {
-                'mae': float(mean_absolute_error(y, y_pred)),
-                'rmse': float(np.sqrt(mean_squared_error(y, y_pred))),
-                'r2': float(r2_score(y, y_pred))
-            }
-
-        return metrics
-
-    def predict(self, X: np.ndarray) -> np.ndarray:
-        """Make predictions"""
-        # Scale sequences
-        n_samples, seq_len, n_features = X.shape
-        X_reshaped = X.reshape(-1, n_features)
-        X_scaled = self.scaler.transform(X_reshaped)
-        X_scaled = X_scaled.reshape(n_samples, seq_len, n_features)
-
-        return self.model.predict(X_scaled, verbose=0).flatten()
-
-    def save(self, path: str):
-        """Save model and scaler"""
-        self.model.save(f"{path}_model.h5")
-        joblib.dump(self.scaler, f"{path}_scaler.pkl")
-
-        if self.history:
-            history_dict = {k: [float(v) for v in val]
-                          for k, val in self.history.history.items()}
-            with open(f"{path}_history.json", 'w') as f:
-                json.dump(history_dict, f)
-
-    def load(self, path: str):
-        """Load model and scaler"""
-        self.model = keras.models.load_model(f"{path}_model.h5")
-        self.scaler = joblib.load(f"{path}_scaler.pkl")
-
-
 class LightGBMModel:
     """
     LightGBM for both classification and regression
@@ -442,11 +284,11 @@ class LightGBMModel:
 
 class EnsembleModel:
     """
-    Ensemble of FFNN, LSTM, and LightGBM
+    Ensemble of FFNN and LightGBM
     """
 
     def __init__(self, weights: Dict[str, float] = None):
-        self.weights = weights or {'ffnn': 0.33, 'lstm': 0.33, 'lgbm': 0.34}
+        self.weights = weights or {'ffnn': 0.5, 'lgbm': 0.5}
         self.models = {}
 
     def add_model(self, name: str, model: Any):
@@ -481,11 +323,6 @@ class EnsembleModel:
         if 'lgbm' in self.models and self.models['lgbm'] is not None:
             pred = self.models['lgbm'].predict(X_tabular)
             add_pred('lgbm', pred, self.weights.get('lgbm', 0.0))
-
-        # LSTM (sequence)
-        if 'lstm' in self.models and self.models['lstm'] is not None and X_sequence is not None:
-            pred = self.models['lstm'].predict(X_sequence)
-            add_pred('lstm', pred, self.weights.get('lstm', 0.0))
 
         if not predictions:
             raise ValueError("Ensemble has no valid predictions to combine.")
