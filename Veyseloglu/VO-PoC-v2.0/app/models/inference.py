@@ -20,7 +20,20 @@ class ReorderPredictor:
 
     def __init__(self, model_dir: str = 'models_store'):
         self.model_dir = model_dir
-        self.engineer = FeatureEngineer(prediction_horizon=14)
+
+        # Load training configuration to get the prediction horizon used during training
+        config_path = os.path.join(model_dir, 'training_config.json')
+        if os.path.exists(config_path):
+            import json
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                self.prediction_horizon = config.get('prediction_horizon', 30)
+        else:
+            print("⚠ Warning: training_config.json not found. Using default horizon=30.")
+            self.prediction_horizon = 30
+
+        self.engineer = FeatureEngineer(prediction_horizon=self.prediction_horizon)
+        print(f"✓ Predictor initialized with {self.prediction_horizon}-day horizon")
 
         # Reorder likelihood models
         self.reorder_models = {
@@ -108,11 +121,18 @@ class ReorderPredictor:
         Predict reorder likelihood
 
         Args:
-            X: Feature matrix
+            X: Feature matrix (tabular features)
             model_name: 'ffnn', 'lgbm', 'lstm', or 'ensemble'
 
         Returns:
             Probability array
+
+        Note:
+            LSTM is NOT included in 'ensemble' mode for tabular inference because:
+            - LSTM requires sequence data (10 time steps per prediction)
+            - Tabular inference uses only the latest features
+            - Building sequences at inference time would require keeping full history
+            For LSTM predictions, use model_name='lstm' with prepared sequences
         """
         if model_name == 'ensemble':
             predictions = []
@@ -123,19 +143,22 @@ class ReorderPredictor:
                 X_scaled = self.reorder_scalers['ffnn'].transform(X)
                 pred = self.reorder_models['ffnn'].predict(X_scaled, verbose=0).flatten()
                 predictions.append(pred)
-                weights.append(0.33)
+                weights.append(0.5)  # 50% weight
 
             # LightGBM
             if self.reorder_models['lgbm'] is not None:
                 X_scaled = self.reorder_scalers['lgbm'].transform(X)
                 pred = self.reorder_models['lgbm'].predict(X_scaled)
                 predictions.append(pred)
-                weights.append(0.33)
+                weights.append(0.5)  # 50% weight
 
-            # LSTM (skip for now in tabular inference)
-            # Would need sequence data
+            # LSTM intentionally excluded from ensemble in tabular inference
+            # (see docstring above for explanation)
 
             # Weighted average
+            if len(predictions) == 0:
+                raise ValueError("No models available for ensemble prediction")
+
             weights = np.array(weights) / sum(weights)
             ensemble_pred = sum(p * w for p, w in zip(predictions, weights))
             return ensemble_pred
@@ -155,14 +178,18 @@ class ReorderPredictor:
     def predict_quantity(self, X: np.ndarray,
                         model_name: str = 'ensemble') -> np.ndarray:
         """
-        Predict next order quantity
+        Predict next order quantity (within prediction horizon)
 
         Args:
-            X: Feature matrix
+            X: Feature matrix (tabular features)
             model_name: 'ffnn', 'lgbm', 'lstm', or 'ensemble'
 
         Returns:
             Quantity predictions
+
+        Note:
+            - Ensemble uses only FFNN + LightGBM (LSTM excluded, see predict_reorder_likelihood)
+            - Predictions are for quantity within the trained prediction horizon
         """
         if model_name == 'ensemble':
             predictions = []
@@ -182,7 +209,12 @@ class ReorderPredictor:
                 predictions.append(pred)
                 weights.append(0.5)
 
+            # LSTM intentionally excluded (same reason as reorder likelihood)
+
             # Weighted average
+            if len(predictions) == 0:
+                raise ValueError("No models available for ensemble prediction")
+
             weights = np.array(weights) / sum(weights)
             ensemble_pred = sum(p * w for p, w in zip(predictions, weights))
             return ensemble_pred
@@ -202,10 +234,24 @@ class ReorderPredictor:
     def predict_for_customer(self, df: pd.DataFrame,
                              customer_id: str,
                              model_name: str = 'ensemble',
-                             top_k: int = 20) -> pd.DataFrame:
+                             top_k: int = 20,
+                             min_probability: float = 0.5) -> pd.DataFrame:
+        """
+        Get predictions for a specific customer
 
+        Args:
+            df: Raw sales data
+            customer_id: Customer ID to predict for
+            model_name: Model to use ('ffnn', 'lgbm', 'ensemble')
+            top_k: Number of top predictions to return
+            min_probability: Minimum reorder probability threshold (0-1)
+                           Only predictions >= this threshold are returned
+
+        Returns:
+            DataFrame with predictions filtered by probability threshold
+        """
         # 1. Get predictions (existing logic)
-        latest = get_latest_features_for_inference(df, customer_id=customer_id)
+        latest = get_latest_features_for_inference(df, customer_id=customer_id, prediction_horizon=self.prediction_horizon)
         if len(latest) == 0: return pd.DataFrame()
         latest = latest.reset_index(drop=True)
 
@@ -246,6 +292,15 @@ class ReorderPredictor:
         results['Product Name'] = results['Product Name'].fillna('Unknown Product')
         results['Product Manufacturer'] = results['Product Manufacturer'].fillna('')
 
+        # 4.5. PROBABILITY GATING (conditional quantity prediction)
+        # Filter to only predictions where reorder_probability >= threshold
+        # This is critical because quantity model is trained only on positive cases
+        results = results[results['reorder_probability'] >= min_probability].copy()
+
+        if len(results) == 0:
+            # No predictions meet the probability threshold
+            return pd.DataFrame()
+
         # 5. SCORE & SORT
         results['priority_score'] = (
             results['reorder_probability'] * 0.6 +
@@ -258,9 +313,23 @@ class ReorderPredictor:
     def predict_for_product(self, df: pd.DataFrame,
                             product_id: str,
                             model_name: str = 'ensemble',
-                            top_k: int = 20) -> pd.DataFrame:
+                            top_k: int = 20,
+                            min_probability: float = 0.5) -> pd.DataFrame:
+        """
+        Get predictions for a specific product (which customers will reorder)
 
-        latest = get_latest_features_for_inference(df, product_id=product_id)
+        Args:
+            df: Raw sales data
+            product_id: Product ID to predict for
+            model_name: Model to use ('ffnn', 'lgbm', 'ensemble')
+            top_k: Number of top predictions to return
+            min_probability: Minimum reorder probability threshold (0-1)
+                           Only predictions >= this threshold are returned
+
+        Returns:
+            DataFrame with predictions filtered by probability threshold
+        """
+        latest = get_latest_features_for_inference(df, product_id=product_id, prediction_horizon=self.prediction_horizon)
         if len(latest) == 0: return pd.DataFrame()
         latest = latest.reset_index(drop=True)
 
@@ -294,6 +363,14 @@ class ReorderPredictor:
 
         results['Partner Customer Name'] = results['Partner Customer Name'].fillna('Unknown Customer')
         results['Salesman Name'] = results['Salesman Name'].fillna('N/A')
+
+        # PROBABILITY GATING (conditional quantity prediction)
+        # Filter to only predictions where reorder_probability >= threshold
+        results = results[results['reorder_probability'] >= min_probability].copy()
+
+        if len(results) == 0:
+            # No predictions meet the probability threshold
+            return pd.DataFrame()
 
         results['priority_score'] = (
             results['reorder_probability'] * 0.7 +

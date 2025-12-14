@@ -45,7 +45,7 @@ predictor = None
 
 
 class TrainRequest(BaseModel):
-    prediction_horizon: int = 14
+    prediction_horizon: int = 30
     test_size: float = 0.2
     resume_training: bool = False
 
@@ -193,18 +193,27 @@ async def train_models(request: TrainRequest):
 
     try:
         print("\n" + "=" * 80)
-        print(f"STARTING MODEL TRAINING (Resume: {request.resume_training})")
+        print(f"STARTING MODEL TRAINING (Horizon: {request.prediction_horizon} days, Resume: {request.resume_training})")
         print("=" * 80)
 
         # Train reorder likelihood models
         print("\n### COMPONENT 1: REORDER LIKELIHOOD ###")
-        reorder_pipeline = ReorderTrainingPipeline(MODEL_DIR, DATA_DIR)
+        reorder_pipeline = ReorderTrainingPipeline(MODEL_DIR, DATA_DIR, prediction_horizon=request.prediction_horizon)
         reorder_metrics = reorder_pipeline.train_all(current_data, resume_training=request.resume_training)
 
         # Train quantity prediction models
         print("\n### COMPONENT 2: QUANTITY PREDICTION ###")
-        quantity_pipeline = QuantityTrainingPipeline(MODEL_DIR, DATA_DIR)
+        quantity_pipeline = QuantityTrainingPipeline(MODEL_DIR, DATA_DIR, prediction_horizon=request.prediction_horizon)
         quantity_metrics = quantity_pipeline.train_all(current_data, resume_training=request.resume_training)
+
+        # Save training configuration metadata
+        training_config = {
+            "prediction_horizon": request.prediction_horizon,
+            "test_size": request.test_size,
+            "resume_training": request.resume_training
+        }
+        with open(os.path.join(MODEL_DIR, 'training_config.json'), 'w') as f:
+            json.dump(training_config, f, indent=2)
 
         # Load trained models into predictor
         predictor = ReorderPredictor(MODEL_DIR)
@@ -217,7 +226,8 @@ async def train_models(request: TrainRequest):
 
         return {
             "status": "success",
-            "message": "All models trained successfully",
+            "message": f"All models trained successfully with {request.prediction_horizon}-day horizon",
+            "prediction_horizon": request.prediction_horizon,
             "reorder_likelihood_metrics": reorder_metrics,
             "quantity_prediction_metrics": quantity_metrics
         }
@@ -237,10 +247,18 @@ async def train_models(request: TrainRequest):
 async def predict_for_customer(
         customer_id: str,
         model: str = Query("ensemble", description="Model to use: ffnn, lgbm, or ensemble"),
-        top_k: int = Query(20, description="Number of products to return")
+        top_k: int = Query(20, description="Number of products to return"),
+        min_probability: float = Query(0.5, ge=0.0, le=1.0, description="Minimum reorder probability threshold (0-1)")
 ):
     """
     Get predictions for a specific customer
+
+    Args:
+        customer_id: Customer ID to predict for
+        model: Model to use for predictions
+        top_k: Maximum number of results to return
+        min_probability: Only return predictions with reorder_probability >= this threshold
+                        (Recommended: 0.7-0.85 for conditional quantity predictions)
     """
     global current_data, predictor
 
@@ -252,7 +270,7 @@ async def predict_for_customer(
 
     try:
         predictions = predictor.predict_for_customer(
-            current_data, customer_id, model, top_k
+            current_data, customer_id, model, top_k, min_probability
         )
 
         if len(predictions) == 0:
@@ -276,10 +294,18 @@ async def predict_for_customer(
 async def predict_for_product(
         product_id: str,
         model: str = Query("ensemble", description="Model to use: ffnn, lgbm, or ensemble"),
-        top_k: int = Query(20, description="Number of customers to return")
+        top_k: int = Query(20, description="Number of customers to return"),
+        min_probability: float = Query(0.5, ge=0.0, le=1.0, description="Minimum reorder probability threshold (0-1)")
 ):
     """
     Get predictions for a specific product (which customers will reorder)
+
+    Args:
+        product_id: Product ID to predict for
+        model: Model to use for predictions
+        top_k: Maximum number of results to return
+        min_probability: Only return predictions with reorder_probability >= this threshold
+                        (Recommended: 0.7-0.85 for conditional quantity predictions)
     """
     global current_data, predictor
 
@@ -291,7 +317,7 @@ async def predict_for_product(
 
     try:
         predictions = predictor.predict_for_product(
-            current_data, product_id, model, top_k
+            current_data, product_id, model, top_k, min_probability
         )
 
         if len(predictions) == 0:

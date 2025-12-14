@@ -253,14 +253,17 @@ class ReorderApp {
             return;
         }
 
-        // 2. Get limit from the specific CUSTOMER input
+        // 2. Get limit and min_probability from the specific CUSTOMER inputs
         const limitInput = document.getElementById('customerTopK');
         const limit = limitInput ? limitInput.value : 20;
 
+        const minProbInput = document.getElementById('customerMinProb');
+        const minProbability = minProbInput ? minProbInput.value : 0.5;
+
         try {
-            // 3. Single Fetch Call
+            // 3. Single Fetch Call with probability gating
             const response = await fetch(
-                `${API_BASE}/predict/customer/${customerId}?model=${model}&top_k=${limit}`
+                `${API_BASE}/predict/customer/${customerId}?model=${model}&top_k=${limit}&min_probability=${minProbability}`
             );
 
             if (!response.ok) throw new Error('Prediction failed');
@@ -289,14 +292,17 @@ class ReorderApp {
             return;
         }
 
-        // 2. Get limit from the specific PRODUCT input
+        // 2. Get limit and min_probability from the specific PRODUCT inputs
         const limitInput = document.getElementById('productTopK');
         const limit = limitInput ? limitInput.value : 20;
 
+        const minProbInput = document.getElementById('productMinProb');
+        const minProbability = minProbInput ? minProbInput.value : 0.5;
+
         try {
-            // 3. Single Fetch Call
+            // 3. Single Fetch Call with probability gating
             const response = await fetch(
-                `${API_BASE}/predict/product/${productId}?model=${model}&top_k=${limit}`
+                `${API_BASE}/predict/product/${productId}?model=${model}&top_k=${limit}&min_probability=${minProbability}`
             );
 
             if (!response.ok) throw new Error('Prediction failed');

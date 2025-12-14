@@ -18,7 +18,7 @@ class FeatureEngineer:
     Feature engineering for reorder likelihood and quantity prediction
     """
 
-    def __init__(self, lookback_days: int = 90, prediction_horizon: int = 14):
+    def __init__(self, lookback_days: int = 90, prediction_horizon: int = 30):
         self.lookback_days = lookback_days
         self.prediction_horizon = prediction_horizon
 
@@ -100,8 +100,10 @@ class FeatureEngineer:
             lambda x: (x - x.min()).dt.days
         )
 
-        # Fill NaN for first orders
-        df['days_since_last_order'] = df['days_since_last_order'].fillna(999)
+        # Fill NaN for first orders - cap at 3x prediction horizon to avoid extreme outliers
+        # This prevents the model from seeing unrealistic values for first-time customers
+        max_days_since_last = self.prediction_horizon * 3
+        df['days_since_last_order'] = df['days_since_last_order'].fillna(max_days_since_last)
 
         return df
 
@@ -109,7 +111,7 @@ class FeatureEngineer:
         """
         Create frequency-based features (order patterns).
         For each customer–product pair we count how many *previous* orders
-        occurred within the last 30/60/90 days using a sliding time window.
+        occurred within horizon-relative lookback windows.
         """
         df = df.sort_values(['customer_id', 'product_id', 'date'])
 
@@ -120,7 +122,11 @@ class FeatureEngineer:
         df['date'] = pd.to_datetime(df['date'])
 
         # Sliding time-window counts per customer-product
-        for days in [30, 60, 90]:
+        # Use horizon-adaptive windows: 1x, 2x, 3x the prediction horizon
+        window_multipliers = [1, 2, 3]
+        window_days = [self.prediction_horizon * mult for mult in window_multipliers]
+
+        for days in window_days:
             col = f'orders_last_{days}d'
             df[col] = 0  # initialise
             window = pd.Timedelta(days=days)
@@ -289,8 +295,13 @@ class FeatureEngineer:
         # Binary target: reorder within prediction horizon
         df['will_reorder'] = (df['days_to_next_order'] <= self.prediction_horizon).astype(int)
 
-        # For quantity prediction: next order quantity
+        # For quantity prediction: next order quantity ONLY if within horizon
+        # This ensures quantity model predicts "quantity within N days" not "quantity whenever"
         df['next_order_quantity'] = df.groupby(['customer_id', 'product_id'])['quantity'].shift(-1)
+
+        # Set quantity to NaN if next order is beyond the prediction horizon
+        # This aligns the quantity target with the same time window as will_reorder
+        df.loc[df['days_to_next_order'] > self.prediction_horizon, 'next_order_quantity'] = np.nan
 
         # Only keep records where we can make predictions (not the last order)
         df_with_target = df[df['next_order_date'].notna()].copy()
@@ -305,8 +316,11 @@ class FeatureEngineer:
             'days_since_last_order', 'days_since_first_order'
         ]
 
+        # Dynamically generate frequency feature names based on horizon
+        window_days = [self.prediction_horizon * mult for mult in [1, 2, 3]]
         frequency_features = [
-            'order_count', 'orders_last_30d', 'orders_last_60d', 'orders_last_90d',
+            'order_count',
+            *[f'orders_last_{days}d' for days in window_days],
             'avg_order_interval', 'order_interval_std'
         ]
 
@@ -427,20 +441,27 @@ class FeatureEngineer:
 
 def get_latest_features_for_inference(df: pd.DataFrame,
                                       customer_id: str = None,
-                                      product_id: str = None) -> pd.DataFrame:
+                                      product_id: str = None,
+                                      prediction_horizon: int = 30) -> pd.DataFrame:
     """
     Get latest feature snapshot for inference
-    """
-    # Try to load pre-calculated features from disk
-    features_path = os.path.join('data', 'processed', 'features_full.parquet')
 
-    if os.path.exists(features_path):
-        print(f"Loading cached features from {features_path} for inference...")
-        df_features = pd.read_parquet(features_path)
-    else:
-        print("Cached features not found. Calculating features from scratch (this may take a while)...")
-        engineer = FeatureEngineer()
-        df_features = engineer.build_features(df, create_targets=False)
+    Args:
+        df: Raw sales data (must include enough historical data for rolling features!)
+        customer_id: Optional customer filter
+        product_id: Optional product filter
+        prediction_horizon: Prediction horizon used during training (must match!)
+
+    Important:
+        - ALWAYS builds features from the provided df (new data)
+        - The df should contain enough historical data to compute rolling features
+        - Recommended: include at least 90 days of history before the prediction date
+    """
+    # ALWAYS build features from the provided data for inference
+    # Do NOT load cached features - those are from training and would be stale
+    print(f"Building features from uploaded data for inference (horizon: {prediction_horizon} days)...")
+    engineer = FeatureEngineer(prediction_horizon=prediction_horizon)
+    df_features = engineer.build_features(df, create_targets=False)
 
     # Get most recent record for each customer-product pair
     latest = df_features.sort_values('date').groupby(['customer_id', 'product_id']).tail(1)

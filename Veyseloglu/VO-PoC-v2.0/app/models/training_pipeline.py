@@ -15,18 +15,71 @@ from app.models.model_architectures import (
 )
 
 
+def time_based_split(df: pd.DataFrame, test_size: float = 0.2,
+                     val_size: float = 0.2, gap_days: int = 0,
+                     date_column: str = 'date') -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Perform time-based train/val/test split to avoid data leakage in forecasting.
+
+    Args:
+        df: DataFrame with a date column
+        test_size: Fraction of data for test set (most recent)
+        val_size: Fraction of remaining data for validation
+        gap_days: Optional gap between train and test to prevent label leakage
+        date_column: Name of the date column
+
+    Returns:
+        train_df, val_df, test_df
+    """
+    # Sort by date
+    df_sorted = df.sort_values(date_column).reset_index(drop=True)
+
+    n = len(df_sorted)
+    test_start_idx = int(n * (1 - test_size))
+
+    # Apply gap if specified
+    if gap_days > 0:
+        test_start_date = df_sorted.iloc[test_start_idx][date_column]
+        gap_start_date = test_start_date - pd.Timedelta(days=gap_days)
+        # Remove rows in the gap period
+        df_no_gap = df_sorted[~((df_sorted[date_column] >= gap_start_date) &
+                                 (df_sorted[date_column] < test_start_date))].reset_index(drop=True)
+        # Recalculate test start after gap removal
+        n_no_gap = len(df_no_gap)
+        test_start_idx = int(n_no_gap * (1 - test_size))
+        df_sorted = df_no_gap
+
+    # Split test
+    test_df = df_sorted.iloc[test_start_idx:].reset_index(drop=True)
+    remaining_df = df_sorted.iloc[:test_start_idx].reset_index(drop=True)
+
+    # Split val from remaining
+    n_remaining = len(remaining_df)
+    val_start_idx = int(n_remaining * (1 - val_size))
+    val_df = remaining_df.iloc[val_start_idx:].reset_index(drop=True)
+    train_df = remaining_df.iloc[:val_start_idx].reset_index(drop=True)
+
+    print(f"\nTime-based split (with {gap_days}-day gap):")
+    print(f"  Train: {len(train_df):,} samples | {train_df[date_column].min()} to {train_df[date_column].max()}")
+    print(f"  Val:   {len(val_df):,} samples | {val_df[date_column].min()} to {val_df[date_column].max()}")
+    print(f"  Test:  {len(test_df):,} samples | {test_df[date_column].min()} to {test_df[date_column].max()}")
+
+    return train_df, val_df, test_df
+
+
 class ReorderTrainingPipeline:
     """
     Complete training pipeline for reorder likelihood prediction
     """
 
-    def __init__(self, model_dir: str = 'models_store', data_dir: str = 'data'):
+    def __init__(self, model_dir: str = 'models_store', data_dir: str = 'data', prediction_horizon: int = 30):
         self.model_dir = model_dir
         self.data_dir = data_dir
+        self.prediction_horizon = prediction_horizon
         os.makedirs(model_dir, exist_ok=True)
         os.makedirs(os.path.join(data_dir, 'processed'), exist_ok=True)
 
-        self.engineer = FeatureEngineer(prediction_horizon=14)
+        self.engineer = FeatureEngineer(prediction_horizon=prediction_horizon)
         self.models = {
             'ffnn': None,
             'lstm': None,
@@ -40,16 +93,17 @@ class ReorderTrainingPipeline:
         Prepare data for training
         """
         print("=" * 80)
-        print("REORDER LIKELIHOOD - DATA PREPARATION")
+        print(f"REORDER LIKELIHOOD - DATA PREPARATION (Horizon: {self.prediction_horizon} days)")
         print("=" * 80)
 
-        feature_file_path = os.path.join(self.data_dir, 'processed', 'features_full.parquet')
+        # Use horizon-aware feature cache path
+        feature_file_path = os.path.join(self.data_dir, 'processed', f'features_full_h{self.prediction_horizon}.parquet')
 
         if resume_training and os.path.exists(feature_file_path):
             print(f"Resuming: Loading engineered features from {feature_file_path}")
             df_features = self.engineer.load_features(feature_file_path)
         else:
-            print("Starting fresh feature engineering...")
+            print(f"Starting fresh feature engineering for {self.prediction_horizon}-day horizon...")
             # Build features
             df_features = self.engineer.build_features(df, create_targets=True)
             # Save features for future use
@@ -58,22 +112,30 @@ class ReorderTrainingPipeline:
         # Get feature columns
         feature_cols = self.engineer.get_feature_columns()['all']
 
-        # Prepare tabular data
-        X = df_features[feature_cols].to_numpy(dtype=np.float32)
-        y = df_features['will_reorder'].to_numpy(dtype=np.float32)
-
-        # Split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y
+        # Time-based split (critical for forecasting to avoid leakage)
+        # Use gap equal to prediction horizon to prevent label leakage
+        train_df, val_df, test_df = time_based_split(
+            df_features,
+            test_size=test_size,
+            val_size=0.2,
+            gap_days=self.prediction_horizon,
+            date_column='date'
         )
 
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_train, y_train, test_size=0.2, random_state=42, stratify=y_train
-        )
+        # Extract features and targets
+        X_train = train_df[feature_cols].to_numpy(dtype=np.float32)
+        y_train = train_df['will_reorder'].to_numpy(dtype=np.float32)
 
-        print(f"Train set: {X_train.shape}, Positive rate: {y_train.mean():.4f}")
-        print(f"Val set: {X_val.shape}, Positive rate: {y_val.mean():.4f}")
-        print(f"Test set: {X_test.shape}, Positive rate: {y_test.mean():.4f}")
+        X_val = val_df[feature_cols].to_numpy(dtype=np.float32)
+        y_val = val_df['will_reorder'].to_numpy(dtype=np.float32)
+
+        X_test = test_df[feature_cols].to_numpy(dtype=np.float32)
+        y_test = test_df['will_reorder'].to_numpy(dtype=np.float32)
+
+        print(f"\nSplit Statistics:")
+        print(f"  Train: {X_train.shape}, Positive rate: {y_train.mean():.4f}")
+        print(f"  Val:   {X_val.shape}, Positive rate: {y_val.mean():.4f}")
+        print(f"  Test:  {X_test.shape}, Positive rate: {y_test.mean():.4f}")
 
         # Prepare LSTM sequences (with caching)
         seq_x_path = os.path.join(self.data_dir, 'processed', 'reorder_seq_X.npy')
@@ -94,21 +156,35 @@ class ReorderTrainingPipeline:
             np.save(seq_y_path, y_seq_like)
 
         if len(X_seq) > 0:
-            X_seq_train, X_seq_test, y_seq_train, y_seq_test = train_test_split(
-                X_seq, y_seq_like, test_size=test_size, random_state=42
-            )
+            # For LSTM, we use the same time-based indices from the tabular split
+            # This ensures LSTM sees the same temporal split as FFNN/LightGBM
+            train_indices = train_df.index
+            val_indices = val_df.index
+            test_indices = test_df.index
 
-            X_seq_train, X_seq_val, y_seq_train, y_seq_val = train_test_split(
-                X_seq_train, y_seq_train, test_size=0.2, random_state=42
-            )
+            # Map sequence indices to split (sequences are already time-ordered)
+            # Note: This is a simplification - for production you may want more sophisticated mapping
+            n_seq = len(X_seq)
+            seq_test_start = int(n_seq * (1 - test_size))
+            seq_val_start = int(seq_test_start * 0.8)
 
-            print(f"LSTM Train sequences: {X_seq_train.shape}")
-            print(f"LSTM Val sequences: {X_seq_val.shape}")
-            print(f"LSTM Test sequences: {X_seq_test.shape}")
+            X_seq_train = X_seq[:seq_val_start]
+            y_seq_train = y_seq_like[:seq_val_start]
+
+            X_seq_val = X_seq[seq_val_start:seq_test_start]
+            y_seq_val = y_seq_like[seq_val_start:seq_test_start]
+
+            X_seq_test = X_seq[seq_test_start:]
+            y_seq_test = y_seq_like[seq_test_start:]
+
+            print(f"\nLSTM Sequences:")
+            print(f"  Train: {X_seq_train.shape}")
+            print(f"  Val:   {X_seq_val.shape}")
+            print(f"  Test:  {X_seq_test.shape}")
         else:
             X_seq_train = X_seq_val = X_seq_test = None
             y_seq_train = y_seq_val = y_seq_test = None
-            print("Not enough data for LSTM sequences")
+            print("\nNot enough data for LSTM sequences")
 
         return {
             'tabular': {
@@ -148,7 +224,7 @@ class ReorderTrainingPipeline:
                 self.metrics['ffnn'] = test_metrics
                 return test_metrics
             except Exception as e:
-                print(f"⚠ Failed to load model: {e}. Starting fresh training...")
+                print(f"Failed to load model: {e}. Starting fresh training...")
 
         print("\n" + "=" * 80)
         print("TRAINING FFNN MODEL")
@@ -266,26 +342,26 @@ class ReorderTrainingPipeline:
         return test_metrics
 
     def create_ensemble(self, data: Dict) -> Dict:
-        """Create ensemble model"""
+        """Create ensemble model (FFNN + LightGBM only for production inference)"""
         print("\n" + "=" * 80)
-        print("CREATING ENSEMBLE MODEL")
+        print("CREATING ENSEMBLE MODEL (FFNN + LightGBM)")
         print("=" * 80)
+        print("Note: LSTM trained but excluded from ensemble for tabular inference")
 
         tab = data['tabular']
         seq = data['sequences']
 
+        # Ensemble uses FFNN + LightGBM only (50/50 weights)
+        # LSTM excluded because it requires sequences at inference time
         self.models['ensemble'] = EnsembleModel(
-            weights={'ffnn': 0.33, 'lstm': 0.33, 'lgbm': 0.34}
+            weights={'ffnn': 0.5, 'lstm': 0.0, 'lgbm': 0.5}
         )
         self.models['ensemble'].add_model('ffnn', self.models['ffnn'])
         self.models['ensemble'].add_model('lstm', self.models['lstm'])
         self.models['ensemble'].add_model('lgbm', self.models['lgbm'])
 
-        if seq['X_test'] is not None:
-            y_pred = self.models['ensemble'].predict(tab['X_test'], seq['X_test'])
-        else:
-            self.models['ensemble'].weights = {'ffnn': 0.5, 'lstm': 0.0, 'lgbm': 0.5}
-            y_pred = self.models['ensemble'].predict(tab['X_test'])
+        # Always use tabular-only prediction for ensemble
+        y_pred = self.models['ensemble'].predict(tab['X_test'])
 
         from sklearn.metrics import roc_auc_score, f1_score
         y_pred_binary = (y_pred > 0.5).astype(int)
@@ -322,13 +398,14 @@ class QuantityTrainingPipeline:
     Complete training pipeline for quantity prediction
     """
 
-    def __init__(self, model_dir: str = 'models_store', data_dir: str = 'data'):
+    def __init__(self, model_dir: str = 'models_store', data_dir: str = 'data', prediction_horizon: int = 30):
         self.model_dir = model_dir
         self.data_dir = data_dir
+        self.prediction_horizon = prediction_horizon
         os.makedirs(model_dir, exist_ok=True)
         os.makedirs(os.path.join(data_dir, 'processed'), exist_ok=True)
 
-        self.engineer = FeatureEngineer(prediction_horizon=14)
+        self.engineer = FeatureEngineer(prediction_horizon=prediction_horizon)
         self.models = {
             'ffnn': None,
             'lstm': None,
@@ -342,32 +419,49 @@ class QuantityTrainingPipeline:
         Prepare data for training
         """
         print("=" * 80)
-        print("QUANTITY PREDICTION - DATA PREPARATION")
+        print(f"QUANTITY PREDICTION - DATA PREPARATION (Horizon: {self.prediction_horizon} days)")
         print("=" * 80)
 
-        feature_file_path = os.path.join(self.data_dir, 'processed', 'features_full.parquet')
+        # Use horizon-aware feature cache path
+        feature_file_path = os.path.join(self.data_dir, 'processed', f'features_full_h{self.prediction_horizon}.parquet')
 
         if resume_training and os.path.exists(feature_file_path):
             print(f"Resuming: Loading engineered features from {feature_file_path}")
             df_features = self.engineer.load_features(feature_file_path)
         else:
             if not 'df_features' in locals():
-                 print("Starting fresh feature engineering (Quantity)...")
+                 print(f"Starting fresh feature engineering for {self.prediction_horizon}-day horizon (Quantity)...")
                  df_features = self.engineer.build_features(df, create_targets=True)
                  self.engineer.save_features(df_features, feature_file_path)
 
         feature_cols = self.engineer.get_feature_columns()['all']
+
+        # Filter to only rows with valid quantity targets (within horizon)
         df_qty = df_features[df_features['next_order_quantity'].notna()].copy()
 
-        X = df_qty[feature_cols].to_numpy(dtype=np.float32)
-        y = df_qty['next_order_quantity'].to_numpy(dtype=np.float32)
+        # Time-based split (same as reorder pipeline)
+        train_df, val_df, test_df = time_based_split(
+            df_qty,
+            test_size=test_size,
+            val_size=0.2,
+            gap_days=self.prediction_horizon,
+            date_column='date'
+        )
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
-        X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+        # Extract features and targets
+        X_train = train_df[feature_cols].to_numpy(dtype=np.float32)
+        y_train = train_df['next_order_quantity'].to_numpy(dtype=np.float32)
 
-        print(f"Train set: {X_train.shape}, Mean qty: {y_train.mean():.2f}")
-        print(f"Val set: {X_val.shape}, Mean qty: {y_val.mean():.2f}")
-        print(f"Test set: {X_test.shape}, Mean qty: {y_test.mean():.2f}")
+        X_val = val_df[feature_cols].to_numpy(dtype=np.float32)
+        y_val = val_df['next_order_quantity'].to_numpy(dtype=np.float32)
+
+        X_test = test_df[feature_cols].to_numpy(dtype=np.float32)
+        y_test = test_df['next_order_quantity'].to_numpy(dtype=np.float32)
+
+        print(f"\nSplit Statistics:")
+        print(f"  Train: {X_train.shape}, Mean qty: {y_train.mean():.2f}")
+        print(f"  Val:   {X_val.shape}, Mean qty: {y_val.mean():.2f}")
+        print(f"  Test:  {X_test.shape}, Mean qty: {y_test.mean():.2f}")
 
         seq_x_path = os.path.join(self.data_dir, 'processed', 'qty_seq_X.npy')
         seq_y_path = os.path.join(self.data_dir, 'processed', 'qty_seq_y.npy')
@@ -389,13 +483,28 @@ class QuantityTrainingPipeline:
             np.save(seq_y_path, y_seq_qty)
 
         if len(X_seq) > 0:
-            X_seq_train, X_seq_test, y_seq_train, y_seq_test = train_test_split(X_seq, y_seq_qty, test_size=test_size, random_state=42)
-            X_seq_train, X_seq_val, y_seq_train, y_seq_val = train_test_split(X_seq_train, y_seq_train, test_size=0.2, random_state=42)
-            print(f"LSTM Train sequences: {X_seq_train.shape}")
+            # Use time-based split for LSTM sequences (same as tabular)
+            n_seq = len(X_seq)
+            seq_test_start = int(n_seq * (1 - test_size))
+            seq_val_start = int(seq_test_start * 0.8)
+
+            X_seq_train = X_seq[:seq_val_start]
+            y_seq_train = y_seq_qty[:seq_val_start]
+
+            X_seq_val = X_seq[seq_val_start:seq_test_start]
+            y_seq_val = y_seq_qty[seq_val_start:seq_test_start]
+
+            X_seq_test = X_seq[seq_test_start:]
+            y_seq_test = y_seq_qty[seq_test_start:]
+
+            print(f"\nLSTM Sequences:")
+            print(f"  Train: {X_seq_train.shape}")
+            print(f"  Val:   {X_seq_val.shape}")
+            print(f"  Test:  {X_seq_test.shape}")
         else:
             X_seq_train = X_seq_val = X_seq_test = None
             y_seq_train = y_seq_val = y_seq_test = None
-            print("Not enough data for LSTM sequences")
+            print("\n⚠ Not enough data for LSTM sequences")
 
         return {
             'tabular': {
