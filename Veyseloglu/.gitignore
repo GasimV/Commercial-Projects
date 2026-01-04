@@ -63,6 +63,7 @@ ENV/
 ############################
 VO-PoC-v1.0/data/
 VO-PoC-v2.0/data/
+VO-PoC-v2.0/Docs/
 
 ############################
 # Data file types (anywhere)
